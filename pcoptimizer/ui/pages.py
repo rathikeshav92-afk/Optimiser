@@ -1162,3 +1162,253 @@ class BenchmarkPage(Page):
         if self.confirm("Clear history", "Delete all benchmark results?"):
             self.backend.bench_history.clear()
             self.render()
+
+
+# =============================================================================== AI assistant
+
+
+QUICK_PROMPTS = [
+    "Why is my PC slow?",
+    "Optimise my PC for gaming",
+    "My internet is slow or keeps dropping",
+    "Set my monitor to its highest refresh rate",
+    "What's using all my RAM?",
+]
+
+
+class ApprovalDialog(tk.Toplevel):
+    """Modal Allow / Don't allow prompt for an action the AI wants to take."""
+
+    def __init__(self, parent, title, details, warning):
+        super().__init__(parent)
+        self.result = False
+        self.title("AI wants to make a change")
+        self.configure(bg=T.CARD)
+        self.transient(parent)
+        self.resizable(False, False)
+        body = tk.Frame(self, bg=T.CARD, padx=22, pady=18)
+        body.pack(fill="both", expand=True)
+        tk.Label(body, text="⚡ The AI assistant wants to:", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).pack(anchor="w")
+        tk.Label(body, text=title, bg=T.CARD, fg=T.TEXT, font=T.F_H2, wraplength=520, justify="left").pack(anchor="w", pady=(2, 10))
+        box = tk.Text(body, height=min(12, max(3, details.count("\n") + 2)), width=70, bg="#0b0d12", fg="#c9d1e0",
+                      font=T.F_MONO, relief="flat", wrap="word", padx=10, pady=8)
+        box.insert("1.0", details)
+        box.configure(state="disabled")
+        box.pack(fill="x")
+        if warning:
+            tk.Label(body, text="⚠ " + warning, bg=T.CARD, fg=T.WARN, font=T.F_SMALL, wraplength=520,
+                     justify="left").pack(anchor="w", pady=(10, 0))
+        row = tk.Frame(body, bg=T.CARD)
+        row.pack(fill="x", pady=(16, 0))
+        Button(row, "Allow", lambda: self._close(True)).pack(side="right")
+        Button(row, "Don't allow", lambda: self._close(False), color=T.CARD_HI).pack(side="right", padx=8)
+        self.protocol("WM_DELETE_WINDOW", lambda: self._close(False))
+        self.bind("<Escape>", lambda _: self._close(False))
+        self.update_idletasks()
+        x = parent.winfo_rootx() + (parent.winfo_width() - self.winfo_width()) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 3
+        self.geometry(f"+{max(0, x)}+{max(0, y)}")
+        self.grab_set()
+        self.focus_set()
+
+    def _close(self, result):
+        self.result = result
+        self.grab_release()
+        self.destroy()
+
+
+class AssistantPage(Page):
+    def build(self):
+        from .. import ai_settings
+
+        self.header("AI Assistant", "Describe a problem or a setting you can't find, in your own words. The AI "
+                                    "looks into your PC and fixes it for you, and asks your permission before "
+                                    "changing anything.", "#a78bfa")
+        self.setup = self.card("Connect the AI", "The assistant uses Claude by Anthropic. Create an API key at "
+                                                 "console.anthropic.com (Settings → API keys) and paste it "
+                                                 "below. Anthropic bills usage on your account. The key is "
+                                                 "stored encrypted on this PC.")
+        row = tk.Frame(self.setup.body, bg=T.CARD)
+        row.pack(fill="x")
+        self.key_entry = tk.Entry(row, show="•", bg="#0b0d12", fg=T.TEXT, insertbackground=T.TEXT,
+                                  relief="flat", font=T.F_MONO)
+        self.key_entry.pack(side="left", fill="x", expand=True, ipady=7, padx=(0, 10))
+        self.key_entry.bind("<Return>", lambda _: self.save_key())
+        Button(row, "Save key", self.save_key, color="#7c5cff").pack(side="left")
+
+        chat = self.card()
+        self.chat_card = chat
+        self.transcript = tk.Text(chat.body, height=17, bg="#0b0d12", fg=T.TEXT, font=T.F_BODY, relief="flat",
+                                  wrap="word", padx=14, pady=12, state="disabled", spacing1=2, spacing3=4)
+        self.transcript.pack(fill="both", expand=True)
+        for tag, opts in {"you": {"foreground": T.ACCENT, "font": (T.FAMILY, 10, "bold")},
+                          "ai": {"foreground": "#a78bfa", "font": (T.FAMILY, 10, "bold")},
+                          "msg": {"foreground": T.TEXT, "lmargin1": 12, "lmargin2": 12},
+                          "step": {"foreground": T.MUTED, "font": T.F_SMALL, "lmargin1": 12},
+                          "err": {"foreground": T.BAD, "lmargin1": 12}}.items():
+            self.transcript.tag_configure(tag, **opts)
+
+        chips = tk.Frame(chat.body, bg=T.CARD)
+        chips.pack(fill="x", pady=(10, 6))
+        for i, p in enumerate(QUICK_PROMPTS):
+            if i % 3 == 0:
+                line = tk.Frame(chips, bg=T.CARD)
+                line.pack(fill="x", pady=(0, 6))
+            Button(line, p, lambda p=p: self.send(p), color=T.CARD_HI, small=True).pack(side="left", padx=(0, 6))
+
+        inp = tk.Frame(chat.body, bg=T.CARD)
+        inp.pack(fill="x", pady=(6, 0))
+        self.input = tk.Text(inp, height=3, bg="#0b0d12", fg=T.TEXT, insertbackground=T.TEXT, relief="flat",
+                             font=T.F_BODY, wrap="word", padx=10, pady=8)
+        self.input.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        self.input.bind("<Return>", self._enter)
+        btns = tk.Frame(inp, bg=T.CARD)
+        btns.pack(side="left", fill="y")
+        self.send_btn = Button(btns, "Send", lambda: self.send(), color="#7c5cff")
+        self.send_btn.pack(fill="x")
+        self.stop_btn = Button(btns, "Stop", self.stop, color=T.CARD_HI, small=True)
+        self.stop_btn.pack(fill="x", pady=(6, 0))
+        foot = tk.Frame(chat.body, bg=T.CARD)
+        foot.pack(fill="x", pady=(8, 0))
+        Button(foot, "New chat", self.new_chat, color=T.CARD_HI, small=True).pack(side="left")
+        Button(foot, "Change API key", self.change_key, color=T.CARD_HI, small=True).pack(side="left", padx=6)
+        tk.Label(foot, text="Enter to send • Shift+Enter for a new line", bg=T.CARD, fg=T.MUTED,
+                 font=T.F_SMALL).pack(side="right")
+        self.stop_btn.set_enabled(False)
+
+        self.assistant = None
+        self.busy = False
+        has_key = self.backend.demo or bool(ai_settings.load_api_key())
+        if has_key:
+            self.setup.pack_forget()
+        self._say("ai", "Hi! I'm your PC assistant. Tell me what's wrong or what you'd like to change, for "
+                        "example \"my games stutter\" or \"how do I turn on night light?\". I'll check your PC "
+                        "and fix it, and I'll always ask before changing anything.")
+
+    # ------------------------------------------------------------------ key setup
+    def save_key(self):
+        from .. import ai_settings
+
+        key = self.key_entry.get().strip()
+        if not key.startswith("sk-ant-"):
+            messagebox.showerror("API key", "That doesn't look like an Anthropic API key (it should start with "
+                                            "'sk-ant-').", parent=self)
+            return
+        ai_settings.save_api_key(key)
+        self.key_entry.delete(0, "end")
+        self.assistant = None
+        self.setup.pack_forget()
+
+    def change_key(self):
+        self.setup.pack(fill="x", pady=(0, 16), before=self.chat_card)
+        self.key_entry.focus_set()
+
+    # ------------------------------------------------------------------ chat
+    def _say(self, who, text, kind="msg"):
+        t = self.transcript
+        t.configure(state="normal")
+        if who:
+            t.insert("end", ("You" if who == "you" else "AI assistant") + "\n", who)
+        t.insert("end", text.strip() + "\n\n" if kind != "step" else "→ " + text + "\n", kind)
+        t.see("end")
+        t.configure(state="disabled")
+
+    def _enter(self, event):
+        if event.state & 0x1:  # Shift held: newline
+            return None
+        self.send()
+        return "break"
+
+    def _ensure_assistant(self):
+        if self.assistant is None:
+            from ..ai_assistant import Assistant
+
+            client = self.backend.ai_client() if hasattr(self.backend, "ai_client") else None
+            self.assistant = Assistant(self.backend, client=client, approve=self._approve,
+                                       notify=lambda m: self.app.ui(lambda: self._say(None, m, "step")),
+                                       on_text=lambda m: self.app.ui(lambda: self._say("ai", m)))
+        return self.assistant
+
+    def _approve(self, title, details, warning) -> bool:
+        """Called on the worker thread: show the dialog on the UI thread and wait for the answer."""
+        import threading
+
+        answer, done = [False], threading.Event()
+
+        def ask():
+            dlg = ApprovalDialog(self.winfo_toplevel(), title, details, warning)
+            self.wait_window(dlg)
+            answer[0] = dlg.result
+            done.set()
+
+        self.app.ui(ask)
+        done.wait()
+        return answer[0]
+
+    def send(self, text=None):
+        if self.busy:
+            return
+        text = (text or self.input.get("1.0", "end")).strip()
+        if not text:
+            return
+        self.input.delete("1.0", "end")
+        self._say("you", text)
+        self.busy = True
+        self.send_btn.set_enabled(False)
+        self.stop_btn.set_enabled(True)
+        assistant = self._ensure_assistant()
+        self._say(None, "Thinking...", "step")
+
+        def done(reply):
+            self._finish()
+            self._say("ai", reply or "(no reply)")
+
+        def error(exc):
+            self._finish()
+            self._say(None, self._explain(exc), "err")
+
+        self.app.bg(lambda: assistant.send(text), done, error, label="AI is working")
+
+    def _finish(self):
+        self.busy = False
+        self.send_btn.set_enabled(True)
+        self.stop_btn.set_enabled(False)
+
+    @staticmethod
+    def _explain(exc) -> str:
+        from ..ai_assistant import Cancelled
+
+        if isinstance(exc, Cancelled):
+            return "Stopped."
+        try:
+            import anthropic
+        except ImportError:
+            return "The AI library isn't installed. Run: pip install anthropic"
+        if isinstance(exc, anthropic.AuthenticationError):
+            return "Your API key was rejected. Click 'Change API key' and paste a valid key."
+        if isinstance(exc, anthropic.PermissionDeniedError):
+            return "Your API key isn't allowed to use this model. Check your Anthropic account."
+        if isinstance(exc, anthropic.RateLimitError):
+            return "Too many requests or no credit left. Wait a minute or check billing in the Anthropic console."
+        if isinstance(exc, anthropic.APIConnectionError):
+            return "Couldn't reach the AI. Check your internet connection."
+        if isinstance(exc, anthropic.APIStatusError):
+            return f"The AI service returned an error ({exc.status_code}). Please try again."
+        if "api_key" in str(exc).lower():
+            return "No API key yet. Paste your key in the box above."
+        return f"Something went wrong: {exc}"
+
+    def stop(self):
+        if self.assistant:
+            self.assistant.cancel_event.set()
+            self._say(None, "Stopping after the current step...", "step")
+
+    def new_chat(self):
+        if self.busy:
+            return
+        if self.assistant:
+            self.assistant.reset()
+        self.transcript.configure(state="normal")
+        self.transcript.delete("1.0", "end")
+        self.transcript.configure(state="disabled")
+        self._say("ai", "New chat started. What can I help with?")

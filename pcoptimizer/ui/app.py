@@ -15,6 +15,7 @@ from . import theme as T
 
 NAV = [
     ("dashboard", "Dashboard", "⌂", pages.DashboardPage),
+    ("assistant", "AI Assistant", "✧", pages.AssistantPage),
     ("gaming", "Gaming Mode", "▶", pages.GamingPage),
     ("games", "Game Profiles", "✦", pages.GamesPage),
     ("balanced", "Balanced Mode", "◐", pages.BalancedPage),

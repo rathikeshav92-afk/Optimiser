@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -87,12 +88,12 @@ def powershell_json(script: str, timeout: float | None = 120):
         return None
 
 
-def stream(cmd: str, on_line: Callable[[str], None], shell: bool = True) -> int:
-    """Run a command, delivering stdout/stderr line by line. Returns the exit code."""
+def stream(cmd: str | list[str], on_line: Callable[[str], None], timeout: float | None = None) -> int:
+    """Run a command (a string goes through the shell), delivering output line by line. Returns the exit code."""
     try:
         proc = subprocess.Popen(
             cmd,
-            shell=shell,
+            shell=isinstance(cmd, str),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
@@ -105,6 +106,10 @@ def stream(cmd: str, on_line: Callable[[str], None], shell: bool = True) -> int:
         on_line(f"Failed to start: {exc}")
         return -1
     assert proc.stdout is not None
+    killer = threading.Timer(timeout, proc.kill) if timeout else None
+    if killer:
+        killer.daemon = True
+        killer.start()
     buf = ""
     # Read char-by-char so tools that redraw progress with \r (sfc, DISM) still update.
     while True:
@@ -117,7 +122,10 @@ def stream(cmd: str, on_line: Callable[[str], None], shell: bool = True) -> int:
         elif ch != "\x00":  # sfc/DISM write UTF-16 when piped; dropping NULs recovers the text
             buf += ch
     _emit(buf, on_line)
-    return proc.wait()
+    code = proc.wait()
+    if killer:
+        killer.cancel()
+    return code
 
 
 def _emit(line: str, on_line: Callable[[str], None]) -> None:

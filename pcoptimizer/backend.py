@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import random
 import time
+from types import SimpleNamespace
 from typing import Callable
 
 from . import benchmark, cleaner, games, processes, sensors, system_info
+from .ai_assistant import AIChangeLog
 from .platform_utils import is_admin, stream
 from .registry import FakeRegistry, default_registry
 from .tweaks import GUID_RE, TweakManager, shell_runner
@@ -23,6 +25,7 @@ class Backend:
         self.cpu = system_info.CpuMeter()
         self.clean_targets = cleaner.build_targets()
         self.games = games.GameLibrary(self.tweaks)
+        self.ai_changes = AIChangeLog(self.tweaks)
         self.bench_history = benchmark.BenchmarkHistory()
         self.sensors = sensors.SensorMonitor()
 
@@ -68,8 +71,8 @@ class Backend:
         processes.set_startup_enabled(self.registry, app, enabled)
 
     # commands
-    def run_command(self, cmd: str, on_line: Log) -> int:
-        return stream(cmd, on_line)
+    def run_command(self, cmd: str | list[str], on_line: Log, timeout: float | None = None) -> int:
+        return stream(cmd, on_line, timeout)
 
     # sensors / games / benchmark
     def temps(self) -> sensors.Reading:
@@ -125,6 +128,7 @@ class DemoBackend(Backend):
         self.cpu = system_info.CpuMeter()
         self.clean_targets = cleaner.build_targets()
         self.games = games.GameLibrary(self.tweaks, data / "games.json")
+        self.ai_changes = AIChangeLog(self.tweaks, data / "ai_changes.json")
         self.bench_history = benchmark.BenchmarkHistory(data / "benchmarks.json")
         self.sensors = sensors.SensorMonitor()
         for svc in ("DiagTrack", "dmwappushservice", "MapsBroker", "RetailDemo", "WerSvc", "Spooler",
@@ -191,6 +195,9 @@ class DemoBackend(Backend):
     def launch_game(self, path):
         pass
 
+    def ai_client(self):
+        return DemoAIClient()
+
     def run_benchmark(self, progress):
         base = {"cpu_single": 1650, "cpu_multi": 14800, "ram_copy": 11.8, "disk_write": 2400, "disk_iops": 2100,
                 "bg_cpu": 9.5, "free_ram": 5.6}
@@ -204,9 +211,36 @@ class DemoBackend(Backend):
             vals["free_ram"] = base["free_ram"] + 2.3
         return benchmark.BenchResult(time.strftime("%Y-%m-%d %H:%M"), vals, benchmark.overall_score(vals))
 
-    def run_command(self, cmd, on_line):
+    def run_command(self, cmd, on_line, timeout=None):
         on_line(f"(demo) would run: {cmd}")
         for pct in (0, 25, 50, 75, 100):
             time.sleep(0.2)
             on_line(f"Progress {pct}%")
         return 0
+
+
+class DemoAIClient:
+    """Scripted stand-in for the Anthropic client so the AI page can be previewed without an API key."""
+
+    def __init__(self):
+        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self.create))
+
+    @staticmethod
+    def _msg(stop_reason, *blocks):
+        return SimpleNamespace(stop_reason=stop_reason, content=list(blocks))
+
+    def create(self, messages, **_kwargs):
+        time.sleep(0.6)
+        last = messages[-1]["content"]
+        if isinstance(last, str):  # a new user message: start by looking at the PC
+            return self._msg("tool_use",
+                             SimpleNamespace(type="text", text="Let me take a look at your PC first."),
+                             SimpleNamespace(type="tool_use", id="t1", name="get_pc_overview", input={}))
+        if last and last[0]["tool_use_id"] == "t1":
+            return self._msg("tool_use", SimpleNamespace(type="tool_use", id="t2", name="apply_optimizations", input={
+                "ids": ["game_dvr_off", "startup_delay"],
+                "reason": "Background game recording and the startup delay are slowing your PC down."}))
+        return self._msg("end_turn", SimpleNamespace(type="text", text=(
+            "Your PC is in good shape overall (rating 85/100). I found two things slowing it down and fixed them:\n"
+            "1. Turned off background game recording, which was costing FPS.\n"
+            "2. Removed the 10-second startup delay.\n\nRestart your PC when convenient to finish applying them.")))

@@ -24,7 +24,14 @@ jobs:
           python -c "import time; from pcoptimizer.sensors import SensorMonitor; m = SensorMonitor(); m.start(); time.sleep(12); print(m.latest); m.stop(); assert m._proc is not None"
           python -c "from pcoptimizer import benchmark; r = benchmark.run(lambda m, p: print(m)); print(r); assert r.score > 0"
       - name: Build PCOptimizer.exe
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --uac-admin --name PCOptimizer launcher.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --uac-admin --collect-submodules anthropic --name PCOptimizer launcher.py
+      - name: Self-test the built exe
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "selftest.txt"
+          $p = Start-Process -FilePath dist\PCOptimizer.exe -ArgumentList "--selftest", "`"$out`"" -Wait -PassThru
+          Get-Content $out
+          if ($p.ExitCode -ne 0) { exit 1 }
       - uses: actions/upload-artifact@v4
         with:
           name: PCOptimizer

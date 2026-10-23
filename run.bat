@@ -9,4 +9,6 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+REM Install/update the AI assistant library (quick when already installed).
+python -m pip install --quiet --disable-pip-version-check -r requirements.txt
 start "" pythonw -m pcoptimizer %*

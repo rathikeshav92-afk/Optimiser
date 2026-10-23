@@ -11,6 +11,7 @@ and a toolkit of maintenance commands. **Every change it makes is backed up and 
 | Section | What it does |
 |---|---|
 | **Dashboard** | Full specs (CPU, GPU + VRAM, RAM speed and sticks, every drive and its type, motherboard, display, Windows build), a **performance rating out of 100** with a per-component breakdown and your weakest part, live CPU/RAM/disk usage, **CPU and GPU temperatures and GPU load**, and **One-Click Boost**. |
+| **AI Assistant** | Chat with Claude (Anthropic's AI) in plain words, for example "my games stutter", "my Wi-Fi keeps dropping" or "turn on night light". It checks your PC with read-only tools and diagnostic commands, then fixes the problem with the app's own optimizations, cleaner, startup manager, Windows commands or registry edits. **It asks your permission before every change** and shows exactly what it will do. Its registry edits are backed up and can be undone in Backup & Restore. It can also open the right Windows Settings page for you. |
 | **Gaming Mode** | Ultimate Performance power plan, Game Mode, background recording (Game DVR) off, hardware-accelerated GPU scheduling, CPU/GPU priority for games (MMCSS), no network throttling, no CPU power throttling, raw mouse input. Lists RAM-heavy background apps so you can close them, and gives driver and in-game setting tips based on your GPU, RAM and monitor. |
 | **Game Profiles** | Add each game's `.exe`. Every game gets **High CPU priority** and the **high-performance GPU**, and you can turn off fullscreen optimizations per game. **Boost & Launch** switches to Gaming Mode, frees RAM, flushes DNS and starts the game as your normal user. |
 | **Balanced Mode** | Switches to the Balanced power plan and puts back your original values for the power-hungry gaming tweaks. Your general speed tweaks stay on. Use it for everyday work and battery life. |
@@ -36,6 +37,17 @@ and a toolkit of maintenance commands. **Every change it makes is backed up and 
 3. Double-click **`run.bat`**.
 
 To build your own `.exe`, double-click **`build_exe.bat`**. The file ends up in `dist\PCOptimizer.exe`.
+
+## Setting up the AI Assistant
+1. Create an account at [console.anthropic.com](https://console.anthropic.com), add credit under
+   **Billing**, and create a key under **Settings → API keys**.
+2. Open **AI Assistant** in the app, paste the key (it starts with `sk-ant-`) and click **Save key**.
+   The key is encrypted with Windows' built-in protection, so only your Windows account can read it.
+   You can also set the `ANTHROPIC_API_KEY` environment variable instead.
+3. Ask anything. Usage is billed by Anthropic to your account: a typical question costs a few cents.
+
+The assistant uses Claude Opus 5.5. It will not turn off Windows Defender, the firewall, UAC or
+Windows Update, or delete your personal files.
 
 ## Recommended first run
 1. **Benchmark → Run benchmark** to record your "before" score.
@@ -85,6 +97,8 @@ pcoptimizer/
   games.py         per-game profiles
   sensors.py       temperature and GPU readings
   benchmark.py     before/after benchmark
+  ai_assistant.py  Claude-powered assistant: tools, approval gate, read-only command detection
+  ai_settings.py   API key storage (Windows DPAPI)
   backend.py       facade used by the UI, plus a demo backend
   ui/              Tkinter interface (theme, widgets, pages)
 ```
