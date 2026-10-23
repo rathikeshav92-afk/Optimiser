@@ -19,6 +19,10 @@ jobs:
         run: python -m pytest -q
       - name: Smoke-test hardware detection
         run: python -c "from pcoptimizer.system_info import collect_specs; from pcoptimizer.rating import rate; s = collect_specs(); print(s); print(rate(s))"
+      - name: Smoke-test sensors and benchmark
+        run: |
+          python -c "import time; from pcoptimizer.sensors import SensorMonitor; m = SensorMonitor(); m.start(); time.sleep(12); print(m.latest); m.stop(); assert m._proc is not None"
+          python -c "from pcoptimizer import benchmark; r = benchmark.run(lambda m, p: print(m)); print(r); assert r.score > 0"
       - name: Build PCOptimizer.exe
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --uac-admin --name PCOptimizer launcher.py
       - uses: actions/upload-artifact@v4
