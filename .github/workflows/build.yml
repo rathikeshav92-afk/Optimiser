@@ -1,0 +1,27 @@
+name: Test & build Windows app
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install tools
+        run: python -m pip install -r requirements-dev.txt
+      - name: Run tests
+        run: python -m pytest -q
+      - name: Smoke-test hardware detection
+        run: python -c "from pcoptimizer.system_info import collect_specs; from pcoptimizer.rating import rate; s = collect_specs(); print(s); print(rate(s))"
+      - name: Build PCOptimizer.exe
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --uac-admin --name PCOptimizer launcher.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PCOptimizer
+          path: dist/PCOptimizer.exe
