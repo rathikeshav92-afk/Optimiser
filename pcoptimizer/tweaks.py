@@ -39,11 +39,14 @@ class Tweak:
     id: str
     title: str
     description: str
-    category: str  # "gaming" | "speed"
+    category: str  # "gaming" | "speed" | "services" | "game"
     values: list[RegValue] = field(default_factory=list)
     needs_restart: bool = False
     recommended: bool = True
     warning: str = ""
+
+    def is_available(self, ctx: "TweakManager") -> bool:
+        return True
 
     def is_applied(self, ctx: "TweakManager") -> bool:
         return all(_same(ctx.registry.get(v.hive, v.key, v.name), v) for v in self.values)
@@ -325,7 +328,13 @@ def build_catalogue() -> list[Tweak]:
             revert_cmd="powercfg /hibernate on",
             check=_reg_check(HKLM, r"SYSTEM\CurrentControlSet\Control\Power", "HibernateEnabled", 0),
         ),
-    ]
+    ] + _service_tweaks()
+
+
+def _service_tweaks() -> list[Tweak]:
+    from .services import build_service_tweaks  # services builds on the classes above
+
+    return build_service_tweaks()
 
 
 class TweakManager:
@@ -349,6 +358,18 @@ class TweakManager:
         tmp = self.backup_path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self._backup, indent=2), encoding="utf-8")
         tmp.replace(self.backup_path)
+
+    def register(self, tweak: Tweak) -> None:
+        """Add a tweak defined at runtime (e.g. a per-game profile)."""
+        if tweak.id in self.by_id:
+            self.tweaks.remove(self.by_id[tweak.id])
+        self.tweaks.append(tweak)
+        self.by_id[tweak.id] = tweak
+
+    def unregister(self, tweak_id: str) -> None:
+        tweak = self.by_id.pop(tweak_id, None)
+        if tweak is not None:
+            self.tweaks.remove(tweak)
 
     def in_category(self, category: str) -> list[Tweak]:
         return [t for t in self.tweaks if t.category == category]
@@ -377,7 +398,10 @@ class TweakManager:
             backup = self._backup.get(tweak_id)
         if backup is None:
             return False
-        self.by_id[tweak_id].revert(self, backup)
+        # A backup whose tweak is no longer defined (e.g. a deleted game profile) still
+        # holds the original registry values, so restore those generically.
+        tweak = self.by_id.get(tweak_id) or Tweak(tweak_id, tweak_id, "", "")
+        tweak.revert(self, backup)
         with self._lock:
             self._backup.pop(tweak_id, None)
             self._save()
@@ -386,6 +410,6 @@ class TweakManager:
     def revert_all(self) -> list[str]:
         reverted = []
         for tweak_id in list(self._backup):
-            if tweak_id in self.by_id and self.revert(tweak_id):
+            if self.revert(tweak_id):
                 reverted.append(tweak_id)
         return reverted

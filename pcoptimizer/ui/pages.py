@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
-from .. import profiles
+from .. import benchmark, profiles
 from ..cleaner import human
 from ..commands import COMMANDS
 from ..system_info import gb
@@ -61,8 +62,9 @@ class Page(tk.Frame):
 class TweakList:
     """Checkbox list of tweaks with live 'Applied' status."""
 
-    def __init__(self, page: Page, parent, tweaks):
+    def __init__(self, page: Page, parent, tweaks, applied_text="✔ Applied", not_applied_text="Not applied"):
         self.page, self.tweaks = page, tweaks
+        self.applied_text, self.not_applied_text = applied_text, not_applied_text
         self.vars = {t.id: tk.BooleanVar(value=t.recommended) for t in tweaks}
         self.rows: dict[str, ToggleRow] = {}
         for i, t in enumerate(tweaks):
@@ -85,12 +87,16 @@ class TweakList:
         mgr = self.page.backend.tweaks
 
         def work():
-            return {t.id: mgr.is_applied(t.id) for t in self.tweaks}
+            return {t.id: (t.is_available(mgr), mgr.is_applied(t.id)) for t in self.tweaks}
 
         def done(status):
-            for tid, applied in status.items():
-                self.rows[tid].set_status("✔ Applied" if applied else "Not applied",
-                                          T.GOOD if applied else T.MUTED)
+            for tid, (available, applied) in status.items():
+                if not available:
+                    self.vars[tid].set(False)
+                    self.rows[tid].set_status("Not installed", T.MUTED)
+                else:
+                    self.rows[tid].set_status(self.applied_text if applied else self.not_applied_text,
+                                              T.GOOD if applied else T.MUTED)
 
         self.page.app.bg(work, done, label="Checking settings")
 
@@ -133,6 +139,15 @@ class DashboardPage(Page):
             val = tk.Label(row, text="-", bg=T.CARD, fg=T.TEXT, font=(T.FAMILY, 10, "bold"), width=16, anchor="e")
             val.pack(side="left")
             self.live[key] = (bar, val)
+        temps = tk.Frame(live.body, bg=T.CARD)
+        temps.pack(fill="x", pady=(0, 10))
+        self.temp_lbls = {}
+        for col, (key, label) in enumerate((("cpu_temp", "CPU temp"), ("gpu_temp", "GPU temp"), ("gpu_load", "GPU load"))):
+            temps.columnconfigure(col, weight=1)
+            tk.Label(temps, text=label, bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).grid(row=0, column=col, sticky="w")
+            lbl = tk.Label(temps, text="-", bg=T.CARD, fg=T.TEXT, font=(T.FAMILY, 13, "bold"))
+            lbl.grid(row=1, column=col, sticky="w")
+            self.temp_lbls[key] = lbl
         self.profile_lbl = tk.Label(live.body, text="Mode: -", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL)
         self.profile_lbl.pack(anchor="w")
 
@@ -168,8 +183,19 @@ class DashboardPage(Page):
             if specs and specs.sys_drive_size:
                 free = self.backend.disk_free()
                 self._set_live("disk", 100 * (1 - free / specs.sys_drive_size), f"{gb(free, 0)} free")
+            self._set_temps(self.backend.temps())
         finally:
             self.after(1500, self.tick)
+
+    def _set_temps(self, r):
+        for key, value, warn, bad, unit in (("cpu_temp", r.cpu_temp, 75, 90, "°C"),
+                                            ("gpu_temp", r.gpu_temp, 78, 87, "°C"),
+                                            ("gpu_load", r.gpu_load, 101, 101, "%")):
+            if value is None:
+                self.temp_lbls[key].configure(text="n/a", fg=T.MUTED)
+            else:
+                color = T.TEXT if unit == "%" else T.GOOD if value < warn else T.WARN if value < bad else T.BAD
+                self.temp_lbls[key].configure(text=f"{value:.0f}{unit}", fg=color)
 
     def _set_live(self, key, pct, text):
         bar, lbl = self.live[key]
@@ -837,7 +863,7 @@ class RestorePage(Page):
 
         def work():
             for tid in mgr.revert_all():
-                log(f"[OK] Restored original: {mgr.by_id[tid].title}")
+                log(f"[OK] Restored original: {mgr.by_id[tid].title if tid in mgr.by_id else tid}")
             log("> All changes undone. Restart your PC to finish.")
 
         self.app.bg(work, lambda _: self.on_show(), label="Restoring")
@@ -851,3 +877,288 @@ class RestorePage(Page):
                                                 "[FAILED] Could not create restore point - turn on System Protection "
                                                 "for your C: drive in 'Create a restore point' settings."),
                     label="Creating restore point")
+
+
+# =============================================================================== Game profiles
+
+
+class GamesPage(Page):
+    OPTIONS = [
+        ("high_priority", "High CPU priority",
+         "Windows always starts the game with High priority, so background tasks can't steal CPU time."),
+        ("high_perf_gpu", "High-performance GPU",
+         "Forces the game onto your dedicated graphics card (Settings → Display → Graphics)."),
+        ("disable_fso", "Disable fullscreen optimizations",
+         "Uses true exclusive fullscreen. Can lower input lag in older DirectX 9-11 games, but test it per game."),
+    ]
+
+    def build(self):
+        self.header("Game Profiles", "Add the games you play. Each one gets its own performance settings, and "
+                                     "Boost & Launch frees RAM and switches to Gaming Mode before starting it.",
+                    T.GAMING)
+        top = self.card()
+        row = tk.Frame(top.body, bg=T.CARD)
+        row.pack(fill="x")
+        Button(row, "+  Add game (.exe)", self.add_game, color=T.GAMING).pack(side="left")
+        self.auto_gaming = tk.BooleanVar(value=True)
+        ttk.Checkbutton(row, text="  Switch to Gaming Mode when launching", variable=self.auto_gaming).pack(side="right")
+
+        self.list_card = self.card("Your games")
+        legend = self.card("What the options do")
+        for _, title, desc in self.OPTIONS:
+            tk.Label(legend.body, text=f"•  {title}: {desc}", bg=T.CARD, fg=T.TEXT, justify="left", wraplength=820,
+                     anchor="w").pack(anchor="w", pady=2)
+        self.log = self.log_card()
+        self.render()
+
+    def render(self):
+        body = self.list_card.body
+        for w in body.winfo_children():
+            w.destroy()
+        games = self.backend.games.games
+        if not games:
+            tk.Label(body, text="No games yet. Click 'Add game' and pick the game's .exe file "
+                                "(e.g. in Steam\\steamapps\\common).", bg=T.CARD, fg=T.MUTED).pack(anchor="w")
+        for i, game in enumerate(games):
+            if i:
+                tk.Frame(body, bg=T.BORDER, height=1).pack(fill="x", pady=10)
+            row = tk.Frame(body, bg=T.CARD)
+            row.pack(fill="x")
+            info = tk.Frame(row, bg=T.CARD)
+            info.pack(side="left", fill="x", expand=True)
+            tk.Label(info, text=game.name, bg=T.CARD, fg=T.TEXT, font=(T.FAMILY, 11, "bold")).pack(anchor="w")
+            tk.Label(info, text=game.path, bg=T.CARD, fg=T.MUTED, font=T.F_SMALL, wraplength=560,
+                     justify="left").pack(anchor="w")
+            opts = tk.Frame(info, bg=T.CARD)
+            opts.pack(anchor="w", pady=(6, 0))
+            for key, title, _ in self.OPTIONS:
+                var = tk.BooleanVar(value=getattr(game, key))
+                ttk.Checkbutton(opts, text=" " + title, variable=var,
+                                command=lambda g=game, k=key, v=var: self.set_option(g, k, v.get())).pack(side="left", padx=(0, 14))
+            Button(row, "Remove", lambda g=game: self.remove(g), color=T.CARD_HI, small=True).pack(side="right", padx=(8, 0))
+            Button(row, "⚡ Boost & Launch", lambda g=game: self.launch(g), color=T.GAMING, small=True).pack(side="right")
+
+    def add_game(self):
+        initial = next((d for d in (r"C:\Program Files (x86)\Steam\steamapps\common", r"C:\Program Files\Epic Games",
+                                    r"C:\XboxGames", r"C:\Program Files") if os.path.isdir(d)), None)
+        path = filedialog.askopenfilename(parent=self, title="Choose the game's .exe", initialdir=initial,
+                                          filetypes=[("Programs", "*.exe")])
+        if not path:
+            return
+        path = os.path.normpath(path)
+        log = self.app.logger(self.log)
+
+        def work():
+            game = self.backend.games.add(path)
+            log(f"[OK] Added {game.name} - high priority and high-performance GPU set")
+
+        self.app.bg(work, lambda _: self.render(), error=lambda e: self.log.write(f"[FAILED] {e}"),
+                    label="Adding game")
+
+    def set_option(self, game, key, value):
+        log = self.app.logger(self.log)
+
+        def work():
+            self.backend.games.update(game, **{key: value})
+            log(f"[OK] {game.name}: {dict((k, t) for k, t, _ in self.OPTIONS)[key]} {'on' if value else 'off'}")
+
+        self.app.bg(work, error=lambda e: self.log.write(f"[FAILED] {e}"), label="Updating game")
+
+    def remove(self, game):
+        if not self.confirm("Remove game", f"Remove {game.name} and restore its original settings?"):
+            return
+        log = self.app.logger(self.log)
+
+        def work():
+            self.backend.games.remove(game)
+            log(f"[OK] Removed {game.name}; its settings were restored")
+
+        self.app.bg(work, lambda _: self.render(), label="Removing game")
+
+    def launch(self, game):
+        if not self.backend.demo and not os.path.exists(game.path):
+            self.log.write(f"[FAILED] {game.path} no longer exists - remove it and add it again.")
+            return
+        log, mgr, b = self.app.logger(self.log), self.backend.tweaks, self.backend
+        switch = self.auto_gaming.get()
+
+        def work():
+            log(f"> Boosting for {game.name}...")
+            if switch and profiles.current_profile(mgr) != "Gaming":
+                profiles.apply_gaming(mgr, log=log)
+            log(f"[OK] Freed memory from {b.trim_ram()} background processes")
+            b.flush_dns()
+            b.launch_game(game.path)
+            log(f"[OK] Launched {game.name}. Have fun!")
+
+        self.app.bg(work, label="Launching")
+
+
+# =============================================================================== Services
+
+
+class ServicesPage(Page):
+    def build(self):
+        self.header("Services", "Turn off Windows services you don't use to free RAM and CPU. "
+                                "Undo puts back each service's original startup type.")
+        c = self.card("Optional services")
+        brow = tk.Frame(c.body, bg=T.CARD)
+        brow.pack(fill="x", pady=(0, 6))
+        self.apply_btn = Button(brow, "Disable selected", self.apply)
+        self.apply_btn.pack(side="left")
+        Button(brow, "Undo selected", self.undo, color=T.CARD_HI).pack(side="left", padx=8)
+        Button(brow, "Select recommended", self.recommended, color=T.CARD_HI, small=True).pack(side="right")
+        tk.Label(c.body, text="Ticked by default: services almost nobody needs. Read the warning before "
+                              "ticking anything marked OPTIONAL.", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).pack(anchor="w", pady=(0, 12))
+        self.list = TweakList(self, c.body, self.backend.tweaks.in_category("services"),
+                              applied_text="✔ Disabled", not_applied_text="Enabled")
+        self.log = self.log_card()
+
+    def on_show(self):
+        self.list.refresh()
+
+    def recommended(self):
+        for t in self.list.tweaks:
+            self.list.vars[t.id].set(t.recommended)
+        self.list.refresh()
+
+    def apply(self):
+        ids = self.list.selected()
+        if not ids:
+            return
+        self.apply_btn.set_enabled(False)
+        mgr, log = self.backend.tweaks, self.app.logger(self.log)
+
+        def work():
+            for i in ids:
+                try:
+                    mgr.apply(i)
+                    log(f"[OK] Disabled {mgr.by_id[i].title}")
+                except Exception as exc:
+                    log(f"[FAILED] {mgr.by_id[i].title}: {exc}")
+
+        def done(_):
+            self.apply_btn.set_enabled(True)
+            self.list.refresh()
+
+        self.app.bg(work, done, label="Disabling services")
+
+    def undo(self):
+        ids = self.list.selected()
+        mgr, log = self.backend.tweaks, self.app.logger(self.log)
+
+        def work():
+            for i in ids:
+                if mgr.revert(i):
+                    log(f"[OK] Restored {mgr.by_id[i].title}")
+
+        self.app.bg(work, lambda _: self.list.refresh(), label="Restoring services")
+
+
+# =============================================================================== Benchmark
+
+
+class BenchmarkPage(Page):
+    def build(self):
+        self.header("Benchmark", "Measure your PC before and after optimising. Run it once now, apply the "
+                                 "optimisations, restart, then run it again to see the difference.")
+        c = self.card()
+        row = tk.Frame(c.body, bg=T.CARD)
+        row.pack(fill="x")
+        self.run_btn = Button(row, "⏱  Run benchmark (~20 s)", self.run)
+        self.run_btn.pack(side="left")
+        Button(row, "Clear history", self.clear, color=T.CARD_HI, small=True).pack(side="right")
+        Button(row, "Use latest as new baseline", self.rebase, color=T.CARD_HI, small=True).pack(side="right", padx=8)
+        self.progress = ttk.Progressbar(c.body, mode="determinate", maximum=1.0)
+        self.progress.pack(fill="x", pady=(14, 4))
+        self.status = tk.Label(c.body, text="Close other apps for the most accurate result.", bg=T.CARD,
+                               fg=T.MUTED, font=T.F_SMALL)
+        self.status.pack(anchor="w")
+        self.results = self.card("Results")
+        tk.Label(self.body, text="Results can vary by about ±5% between runs. Optimising mostly reduces background "
+                                 "load and frees RAM and disk space, so expect the biggest changes there.",
+                 bg=T.BG, fg=T.MUTED, font=T.F_SMALL, wraplength=840, justify="left").pack(anchor="w")
+        self.render()
+
+    def render(self):
+        body = self.results.body
+        for w in body.winfo_children():
+            w.destroy()
+        hist = self.backend.bench_history
+        base, latest = hist.baseline, hist.latest
+        if not base:
+            tk.Label(body, text="No results yet. Run the benchmark to set your 'before' score.", bg=T.CARD,
+                     fg=T.MUTED).pack(anchor="w")
+            return
+        score_row = tk.Frame(body, bg=T.CARD)
+        score_row.pack(fill="x", pady=(0, 14))
+        self._score_box(score_row, "BEFORE", base.score, base.timestamp, T.MUTED)
+        if latest:
+            pct = 100 * (latest.score - base.score) / base.score if base.score else 0
+            self._score_box(score_row, "AFTER", latest.score, latest.timestamp, T.ACCENT)
+            tk.Label(score_row, text=f"{pct:+.1f}%", bg=T.CARD, fg=T.GOOD if pct >= 0 else T.BAD,
+                     font=(T.FAMILY, 26, "bold")).pack(side="left", padx=20)
+
+        grid = tk.Frame(body, bg=T.CARD)
+        grid.pack(fill="x")
+        heads = ["Test", "Before", "After", "Change"] if latest else ["Test", "Result"]
+        for col, h in enumerate(heads):
+            grid.columnconfigure(col, weight=2 if col == 0 else 1)
+            tk.Label(grid, text=h.upper(), bg=T.CARD, fg=T.MUTED, font=(T.FAMILY, 8, "bold"), anchor="w").grid(
+                row=0, column=col, sticky="w", pady=(0, 6))
+        for r, (key, label, unit, _hb, _ref) in enumerate(benchmark.METRICS, start=1):
+            b = base.values.get(key, 0)
+            cells = [label, self._fmt(b, unit)]
+            colors = [T.TEXT, T.TEXT]
+            if latest:
+                a = latest.values.get(key, 0)
+                ch = benchmark.change(key, b, a)
+                suffix = " pts" if key == "bg_cpu" else "%"
+                cells += [self._fmt(a, unit), f"{ch:+.1f}{suffix}"]
+                colors += [T.TEXT, T.GOOD if ch > 1 else T.BAD if ch < -1 else T.MUTED]
+            for col, (text, color) in enumerate(zip(cells, colors)):
+                tk.Label(grid, text=text, bg=T.CARD, fg=color, font=T.F_BODY, anchor="w").grid(
+                    row=r, column=col, sticky="w", pady=3)
+
+    def _score_box(self, parent, title, score, when, color):
+        box = tk.Frame(parent, bg=T.CARD_HI, padx=18, pady=10)
+        box.pack(side="left", padx=(0, 12))
+        tk.Label(box, text=title, bg=T.CARD_HI, fg=color, font=(T.FAMILY, 8, "bold")).pack(anchor="w")
+        tk.Label(box, text=str(score), bg=T.CARD_HI, fg=T.TEXT, font=(T.FAMILY, 26, "bold")).pack(anchor="w")
+        tk.Label(box, text=when, bg=T.CARD_HI, fg=T.MUTED, font=T.F_SMALL).pack(anchor="w")
+
+    @staticmethod
+    def _fmt(value, unit):
+        if unit in ("GB/s", "GB"):
+            return f"{value:.1f} {unit}"
+        if unit == "%":
+            return f"{value:.1f}%"
+        return f"{value:,.0f} {unit}"
+
+    def run(self):
+        self.run_btn.set_enabled(False)
+        self.progress.configure(value=0)
+
+        def progress(msg, frac):
+            self.app.ui(lambda: (self.status.configure(text=msg, fg=T.TEXT), self.progress.configure(value=frac)))
+
+        def done(result):
+            self.backend.bench_history.add(result)
+            self.run_btn.set_enabled(True)
+            self.status.configure(text=f"Finished - score {result.score}", fg=T.GOOD)
+            self.render()
+
+        def error(exc):
+            self.run_btn.set_enabled(True)
+            self.status.configure(text=f"Benchmark failed: {exc}", fg=T.BAD)
+
+        self.app.bg(lambda: self.backend.run_benchmark(progress), done, error, label="Benchmarking")
+
+    def rebase(self):
+        self.backend.bench_history.set_baseline_to_latest()
+        self.render()
+
+    def clear(self):
+        if self.confirm("Clear history", "Delete all benchmark results?"):
+            self.backend.bench_history.clear()
+            self.render()

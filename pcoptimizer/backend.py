@@ -6,7 +6,7 @@ import random
 import time
 from typing import Callable
 
-from . import cleaner, processes, system_info
+from . import benchmark, cleaner, games, processes, sensors, system_info
 from .platform_utils import is_admin, stream
 from .registry import FakeRegistry, default_registry
 from .tweaks import GUID_RE, TweakManager, shell_runner
@@ -22,6 +22,9 @@ class Backend:
         self.tweaks = TweakManager(self.registry, shell_runner)
         self.cpu = system_info.CpuMeter()
         self.clean_targets = cleaner.build_targets()
+        self.games = games.GameLibrary(self.tweaks)
+        self.bench_history = benchmark.BenchmarkHistory()
+        self.sensors = sensors.SensorMonitor()
 
     # specs / usage
     def specs(self) -> system_info.SystemSpecs:
@@ -68,6 +71,20 @@ class Backend:
     def run_command(self, cmd: str, on_line: Log) -> int:
         return stream(cmd, on_line)
 
+    # sensors / games / benchmark
+    def temps(self) -> sensors.Reading:
+        self.sensors.start()
+        return self.sensors.latest
+
+    def launch_game(self, path: str) -> None:
+        games.launch(path)
+
+    def run_benchmark(self, progress) -> benchmark.BenchResult:
+        return benchmark.run(progress)
+
+    def shutdown(self) -> None:
+        self.sensors.stop()
+
 
 class _DemoRunner:
     """Pretends to be powercfg so power-plan tweaks behave realistically in demo mode."""
@@ -98,16 +115,23 @@ class _DemoRunner:
 class DemoBackend(Backend):
     demo = True
 
-    def __init__(self, backup_path=None):
+    def __init__(self, data_dir=None):
         import tempfile
         from pathlib import Path
 
         self.registry = FakeRegistry()
-        path = backup_path or Path(tempfile.gettempdir()) / "pcoptimizer_demo_backup.json"
-        path.unlink(missing_ok=True)
-        self.tweaks = TweakManager(self.registry, _DemoRunner(), backup_path=path)
+        data = Path(data_dir or tempfile.mkdtemp(prefix="pcoptimizer_demo_"))
+        self.tweaks = TweakManager(self.registry, _DemoRunner(), backup_path=data / "backup.json")
         self.cpu = system_info.CpuMeter()
         self.clean_targets = cleaner.build_targets()
+        self.games = games.GameLibrary(self.tweaks, data / "games.json")
+        self.bench_history = benchmark.BenchmarkHistory(data / "benchmarks.json")
+        self.sensors = sensors.SensorMonitor()
+        for svc in ("DiagTrack", "dmwappushservice", "MapsBroker", "RetailDemo", "WerSvc", "Spooler",
+                    "XblAuthManager", "XblGameSave", "XboxNetApiSvc", "lfsvc", "WSearch", "SysMain"):
+            self.registry.set("HKLM", rf"SYSTEM\CurrentControlSet\Services\{svc}", "Start", 2 if svc in ("DiagTrack", "Spooler", "WSearch", "SysMain") else 3, "DWORD")
+        self.registry.set("HKLM", r"SYSTEM\CurrentControlSet\Services\RemoteRegistry", "Start", 4, "DWORD")
+        self.games.add(r"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\bin\win64\cs2.exe")
         self._junk = {t.id: random.randint(5, 900) * 1024 ** 2 for t in self.clean_targets}
         self._ram_used = 0.62
         rk = processes.RUN_KEYS[0]
@@ -159,6 +183,26 @@ class DemoBackend(Backend):
 
     def end_process(self, name):
         return True, f"SUCCESS: terminated {name}"
+
+    def temps(self):
+        return sensors.Reading(cpu_temp=random.uniform(44, 52), gpu_temp=random.uniform(40, 46),
+                               gpu_load=random.uniform(2, 9), gpu_fan=30)
+
+    def launch_game(self, path):
+        pass
+
+    def run_benchmark(self, progress):
+        base = {"cpu_single": 1650, "cpu_multi": 14800, "ram_copy": 11.8, "disk_write": 2400, "disk_iops": 2100,
+                "bg_cpu": 9.5, "free_ram": 5.6}
+        boost = 1.0 if not self.bench_history.results else 1.06
+        for i, (key, label, *_rest) in enumerate(benchmark.METRICS):
+            progress(label + "...", (i + 1) / len(benchmark.METRICS))
+            time.sleep(0.25)
+        vals = {k: (v * random.uniform(0.97, 1.03) * (boost if k != "bg_cpu" else (1 if boost == 1 else 0.45)))
+                for k, v in base.items()}
+        if boost > 1:
+            vals["free_ram"] = base["free_ram"] + 2.3
+        return benchmark.BenchResult(time.strftime("%Y-%m-%d %H:%M"), vals, benchmark.overall_score(vals))
 
     def run_command(self, cmd, on_line):
         on_line(f"(demo) would run: {cmd}")

@@ -10,12 +10,15 @@ and a toolkit of maintenance commands. **Every change it makes is backed up and 
 
 | Section | What it does |
 |---|---|
-| **Dashboard** | Full specs (CPU, GPU + VRAM, RAM speed and sticks, every drive and its type, motherboard, display, Windows build), a **performance rating out of 100** with a per-component breakdown and your weakest part, live CPU/RAM/disk usage, and **One-Click Boost**. |
+| **Dashboard** | Full specs (CPU, GPU + VRAM, RAM speed and sticks, every drive and its type, motherboard, display, Windows build), a **performance rating out of 100** with a per-component breakdown and your weakest part, live CPU/RAM/disk usage, **CPU and GPU temperatures and GPU load**, and **One-Click Boost**. |
 | **Gaming Mode** | Ultimate Performance power plan, Game Mode, background recording (Game DVR) off, hardware-accelerated GPU scheduling, CPU/GPU priority for games (MMCSS), no network throttling, no CPU power throttling, raw mouse input. Lists RAM-heavy background apps so you can close them, and gives driver and in-game setting tips based on your GPU, RAM and monitor. |
+| **Game Profiles** | Add each game's `.exe`. Every game gets **High CPU priority** and the **high-performance GPU**, and you can turn off fullscreen optimizations per game. **Boost & Launch** switches to Gaming Mode, frees RAM, flushes DNS and starts the game as your normal user. |
 | **Balanced Mode** | Switches to the Balanced power plan and puts back your original values for the power-hungry gaming tweaks. Your general speed tweaks stay on. Use it for everyday work and battery life. |
 | **Speed Up PC** | Visual effects set to best performance (smooth fonts kept), transparency off, no startup-app delay, faster menus, Store apps stopped from running in the background, ads and suggestions off, web results removed from Start search, less telemetry, faster shutdown, NTFS last-access timestamps off, optional hibernation off. Also has a **startup-apps manager** that works the same way as Task Manager. |
+| **Services** | Disable services you don't use: telemetry, WAP Push, Maps, Retail Demo, Fax, Error Reporting and Remote Registry are ticked by default. Optional ones are Print Spooler, the Xbox services, Geolocation, Search indexing and SysMain, each with a warning about what stops working. Undo puts back the original startup type. |
 | **Cleaner & RAM** | Scans and cleans user and Windows temp files, the Windows Update cache, the Delivery Optimization cache, thumbnail caches, crash dumps, old logs, browser caches and the Recycle Bin. **Free up RAM** trims the memory every app holds, and you can flush the DNS cache. |
 | **CMD Toolkit** | One-click `sfc /scannow`, `DISM /RestoreHealth`, `chkdsk /scan`, WinSxS cleanup, TRIM/defrag, Disk Cleanup, DNS flush, IP renew, Winsock/TCP reset, TCP auto-tuning, restore point, `winget upgrade --all`, Explorer restart and a power report. Output streams live. You can also run your own commands. |
+| **Benchmark** | A roughly 20-second test of single-core and all-core CPU, RAM copy speed, disk write speed, 4K disk writes, background CPU load and free RAM. Your first run is saved as **Before**, and later runs show **After** with the % change for each test. |
 | **Backup & Restore** | Create a restore point, see every change that's currently applied, undo changes one by one or all at once, and open System Restore. |
 
 ## Getting it on your PC
@@ -35,12 +38,22 @@ and a toolkit of maintenance commands. **Every change it makes is backed up and 
 To build your own `.exe`, double-click **`build_exe.bat`**. The file ends up in `dist\PCOptimizer.exe`.
 
 ## Recommended first run
-1. **Backup & Restore → Create restore point**
-2. **Dashboard → One-Click Boost**
-3. **Gaming Mode → Activate** if you play games, or **Balanced Mode** for work.
-4. **Speed Up PC → Startup apps**: disable anything you don't need at boot.
-5. **CMD Toolkit**: run *Repair Windows image (DISM)* and then *Repair system files (SFC)* once.
-6. **Restart your PC.**
+1. **Benchmark → Run benchmark** to record your "before" score.
+2. **Backup & Restore → Create restore point**
+3. **Dashboard → One-Click Boost**
+4. **Gaming Mode → Activate** if you play games, or **Balanced Mode** for work.
+5. **Game Profiles**: add your games.
+6. **Services → Disable selected** (the recommended ones are already ticked).
+7. **Speed Up PC → Startup apps**: disable anything you don't need at boot.
+8. **CMD Toolkit**: run *Repair Windows image (DISM)* and then *Repair system files (SFC)* once.
+9. **Restart your PC**, then run the **Benchmark** again to see the difference.
+
+## About temperatures
+- **CPU temperature** comes from Windows' built-in thermal sensors. Many desktop motherboards don't
+  report a real CPU temperature to Windows, and then the app shows *n/a*. For exact per-core
+  readings, use a tool like HWiNFO.
+- **GPU temperature and fan speed** come from `nvidia-smi`, which is installed with NVIDIA drivers.
+  **GPU load** works on every brand of graphics card.
 
 ## Safety
 - Before it changes a registry value, the app saves the original to
@@ -68,6 +81,10 @@ pcoptimizer/
   cleaner.py       junk scanning and cleaning, RAM trimming
   processes.py     background apps and startup-app manager
   commands.py      CMD Toolkit catalogue
+  services.py      optional services that can be disabled
+  games.py         per-game profiles
+  sensors.py       temperature and GPU readings
+  benchmark.py     before/after benchmark
   backend.py       facade used by the UI, plus a demo backend
   ui/              Tkinter interface (theme, widgets, pages)
 ```

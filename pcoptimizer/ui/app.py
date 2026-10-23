@@ -16,10 +16,13 @@ from . import theme as T
 NAV = [
     ("dashboard", "Dashboard", "⌂", pages.DashboardPage),
     ("gaming", "Gaming Mode", "▶", pages.GamingPage),
+    ("games", "Game Profiles", "✦", pages.GamesPage),
     ("balanced", "Balanced Mode", "◐", pages.BalancedPage),
     ("tweaks", "Speed Up PC", "⚙", pages.TweaksPage),
+    ("services", "Services", "☰", pages.ServicesPage),
     ("cleaner", "Cleaner & RAM", "♲", pages.CleanerPage),
     ("commands", "CMD Toolkit", "❯", pages.CommandsPage),
+    ("benchmark", "Benchmark", "⏱", pages.BenchmarkPage),
     ("restore", "Backup & Restore", "↺", pages.RestorePage),
 ]
 
@@ -35,8 +38,9 @@ class App(tk.Tk):
         self._spec_listeners: list[Callable] = []
 
         self.title(f"{APP_NAME}{'  (demo)' if backend.demo else ''}")
-        self.geometry("1180x780")
-        self.minsize(980, 640)
+        self.geometry("1180x800")
+        self.minsize(980, 700)
+        self.protocol("WM_DELETE_WINDOW", self._close)
         T.setup(self)
 
         self._build_sidebar()
@@ -57,7 +61,7 @@ class App(tk.Tk):
         bar.pack(side="left", fill="y")
         bar.pack_propagate(False)
         logo = tk.Frame(bar, bg=T.SIDEBAR)
-        logo.pack(fill="x", padx=18, pady=(22, 26))
+        logo.pack(fill="x", padx=18, pady=(20, 18))
         tk.Label(logo, text="⚡", bg=T.SIDEBAR, fg=T.ACCENT, font=(T.FAMILY, 22)).pack(side="left")
         tk.Label(logo, text="PC Optimizer", bg=T.SIDEBAR, fg=T.TEXT, font=(T.FAMILY, 14, "bold")).pack(side="left", padx=6)
         self._nav_items: dict[str, tuple[tk.Frame, list[tk.Widget]]] = {}
@@ -65,7 +69,7 @@ class App(tk.Tk):
             row = tk.Frame(bar, bg=T.SIDEBAR, cursor="hand2")
             row.pack(fill="x", padx=10, pady=2)
             ic = tk.Label(row, text=icon, bg=T.SIDEBAR, fg=T.MUTED, font=(T.FAMILY, 12), width=2)
-            ic.pack(side="left", padx=(8, 4), pady=9)
+            ic.pack(side="left", padx=(8, 4), pady=7)
             tx = tk.Label(row, text=label, bg=T.SIDEBAR, fg=T.MUTED, font=(T.FAMILY, 10, "bold"))
             tx.pack(side="left")
             for w in (row, ic, tx):
@@ -80,6 +84,12 @@ class App(tk.Tk):
         tk.Label(foot, text=f"v{__version__}", bg=T.SIDEBAR, fg=T.MUTED, font=T.F_SMALL).pack(anchor="w")
         self.busy_label = tk.Label(foot, text="", bg=T.SIDEBAR, fg=T.ACCENT, font=T.F_SMALL)
         self.busy_label.pack(anchor="w", pady=(6, 0))
+
+    def _close(self):
+        try:
+            self.backend.shutdown()
+        finally:
+            self.destroy()
 
     def show(self, key: str):
         for k, (row, widgets) in self._nav_items.items():
@@ -116,7 +126,8 @@ class App(tk.Tk):
                 result = work()
             except Exception as exc:
                 traceback.print_exc()
-                self.ui(lambda: (self._set_busy(-1), error(exc) if error else None))
+                # Bind exc now: Python clears the name when the except block ends.
+                self.ui(lambda e=exc: (self._set_busy(-1), error(e) if error else None))
                 return
             self.ui(lambda: (self._set_busy(-1), done(result) if done else None))
 
