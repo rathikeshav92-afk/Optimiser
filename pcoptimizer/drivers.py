@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
-from .platform_utils import as_list, powershell_json
+from .platform_utils import as_list, powershell, powershell_json
 
 GUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 OLD_DRIVER_YEARS = 3
@@ -29,7 +29,7 @@ $session.ClientApplicationID = 'PC Optimizer'
 $searcher = $session.CreateUpdateSearcher()
 $searcher.Online = $true
 $result = $searcher.Search("IsInstalled=0 and Type='Driver' and IsHidden=0")
-@($result.Updates | ForEach-Object {
+$list = @($result.Updates | ForEach-Object {
     [pscustomobject]@{
         Id = $_.Identity.UpdateID; Title = $_.Title; Class = $_.DriverClass
         Manufacturer = $_.DriverManufacturer; Model = $_.DriverModel
@@ -37,6 +37,8 @@ $result = $searcher.Search("IsInstalled=0 and Type='Driver' and IsHidden=0")
         Size = [int64]$_.MaxDownloadSize; Description = $_.Description
     }
 })
+# Wrap the list: an empty array piped to ConvertTo-Json prints nothing at all.
+[pscustomobject]@{ updates = $list } | ConvertTo-Json -Depth 4 -Compress
 """
 
 # Downloads and installs the updates whose IDs are listed in $ids. Prints progress lines,
@@ -223,13 +225,23 @@ def backup_folder() -> Path:
 # --------------------------------------------------------------------------- Windows calls
 
 
+def parse_search_output(returncode: int, stdout: str, stderr: str) -> list[DriverUpdate]:
+    try:
+        data = json.loads(stdout.strip().splitlines()[-1]) if returncode == 0 and stdout.strip() else None
+    except (ValueError, IndexError):
+        data = None
+    if not isinstance(data, dict) or "updates" not in data:
+        detail = (stderr or stdout).strip().splitlines()
+        hint = next((ln.strip() for ln in detail if "0x" in ln or "Exception" in ln), detail[0] if detail else "")
+        raise RuntimeError("Windows Update couldn't be checked. Make sure you're online and the Windows Update "
+                           f"service isn't disabled.{' Details: ' + hint if hint else ''}")
+    return parse_updates(data["updates"])
+
+
 def search_updates() -> list[DriverUpdate]:
     """Ask Windows Update for applicable driver updates. Usually takes 30 s - 3 min."""
-    data = powershell_json(SEARCH_SCRIPT, timeout=15 * 60)
-    if data is None:
-        raise RuntimeError("Windows Update couldn't be reached. Check your internet connection and that the "
-                           "Windows Update service isn't disabled.")
-    return parse_updates(data)
+    res = powershell(SEARCH_SCRIPT, timeout=15 * 60)
+    return parse_search_output(res.returncode, res.stdout or "", res.stderr or "")
 
 
 def install_updates(ids: list[str], run_command: Callable, log: Callable[[str], None]) -> InstallResult:

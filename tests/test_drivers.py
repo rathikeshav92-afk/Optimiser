@@ -83,3 +83,16 @@ def test_ai_installs_driver_after_approval(tmp_path):
     assert uid not in {u.id for u in b.search_driver_updates()}
     out, err = a.run_tool("install_driver_updates", {"ids": ["bogus"], "reason": "x"})
     assert err
+
+
+def test_search_output_empty_means_up_to_date():
+    assert drivers.parse_search_output(0, '{"updates":[]}\n', "") == []
+    ups = drivers.parse_search_output(0, '{"updates":{"Id":"%s","Title":"T"}}' % G1, "")
+    assert [u.id for u in ups] == [G1]
+
+
+def test_search_output_error_shows_details():
+    with pytest.raises(RuntimeError, match="0x8024402C"):
+        drivers.parse_search_output(1, "", "Exception from HRESULT: 0x8024402C\nAt line:6")
+    with pytest.raises(RuntimeError):
+        drivers.parse_search_output(0, "", "")

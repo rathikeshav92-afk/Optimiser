@@ -26,9 +26,12 @@ def check(name, fn):
 
 
 def installed():
+    # A VM may only have Microsoft's own drivers, so prove the WMI query works by counting all drivers too.
+    total = powershell("@(Get-CimInstance Win32_PnPSignedDriver | Where-Object DeviceName).Count")
+    assert total.returncode == 0 and int(total.stdout.strip() or 0) > 0, total.stdout + total.stderr
     ds = drivers.installed_drivers()
-    assert ds, "no third-party drivers found"
-    return f"{len(ds)} drivers, oldest: {ds[0].device} {ds[0].date}"
+    oldest = f", oldest: {ds[0].device} {ds[0].date}" if ds else ""
+    return f"{total.stdout.strip()} drivers in total, {len(ds)} from hardware makers{oldest}"
 
 
 def problems():
