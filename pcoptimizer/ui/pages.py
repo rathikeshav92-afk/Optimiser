@@ -8,7 +8,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
-from .. import benchmark, profiles
+from .. import benchmark, boost, profiles
 from ..cleaner import human
 from ..commands import COMMANDS
 from ..drivers import OLD_DRIVER_YEARS
@@ -162,8 +162,9 @@ class DashboardPage(Page):
         Button(row, "♲  Clean junk", lambda: self.app.show("cleaner"), color=T.CARD_HI).pack(side="left", padx=(0, 10))
         self.ram_btn = Button(row, "Free up RAM", self.free_ram, color=T.CARD_HI)
         self.ram_btn.pack(side="left")
-        tk.Label(actions.body, text="One-Click Boost creates a restore point, applies every recommended speed tweak, "
-                                    "cleans junk files, frees RAM and flushes DNS. Everything can be undone.",
+        tk.Label(actions.body, text="One-Click Boost creates a restore point, applies the recommended speed and "
+                                    "privacy settings, turns off unneeded services, cleans junk, frees RAM and "
+                                    "flushes DNS. You choose the steps, and everything can be undone.",
                  bg=T.CARD, fg=T.MUTED, font=T.F_SMALL, wraplength=820, justify="left").pack(anchor="w", pady=(10, 0))
 
         self.specs_card = self.card("System specifications")
@@ -284,47 +285,66 @@ class DashboardPage(Page):
         self.app.bg(work, done, label="Freeing RAM")
 
     def one_click_boost(self):
-        if not self.confirm("One-Click Boost",
-                            "This will:\n\n• Create a system restore point\n• Apply all recommended speed tweaks\n"
-                            "• Clean temporary/junk files\n• Free up RAM and flush DNS\n\n"
-                            "Every change can be undone from 'Backup & Restore'. Continue?"):
+        dlg = BoostDialog(self.winfo_toplevel())
+        self.wait_window(dlg)
+        if not dlg.result:
             return
+        steps = dlg.result
         self.boost_btn.set_enabled(False)
         log = self.app.logger(self.log)
-        b, mgr = self.backend, self.backend.tweaks
+        self.log.write("> One-Click Boost started")
 
-        def work():
-            restore = next(c for c in COMMANDS if c.id == "restore_point")
-            log("> Creating restore point (can take a minute)...")
-            code = b.run_command(restore.command, lambda _l: None)
-            log("[OK] Restore point created" if code == 0 else "[FAILED] Restore point (System Protection may be off)")
-            log("> Applying speed tweaks...")
-            for t in mgr.in_category("speed"):
-                if t.recommended:
-                    try:
-                        mgr.apply(t.id)
-                        log(f"[OK] {t.title}")
-                    except Exception as exc:
-                        log(f"[FAILED] {t.title}: {exc}")
-            log("> Cleaning junk files...")
-            freed = 0
-            for target in b.clean_targets:
-                if target.recommended:
-                    try:
-                        freed += b.clean(target, log)
-                    except Exception as exc:
-                        log(f"[FAILED] {target.title}: {exc}")
-            log("> Freeing RAM...")
-            log(f"[OK] Trimmed {b.trim_ram()} processes")
-            log("[OK] DNS cache flushed" if b.flush_dns() else "[FAILED] DNS flush")
-            return freed
-
-        def done(freed):
+        def done(res):
             self.boost_btn.set_enabled(True)
-            self.log.write(f"> Boost complete - {human(freed)} freed. Restart your PC to finish applying tweaks.")
+            self.log.write(f"> Boost complete - {boost.summary(res)}. Undo anything in Backup & Restore.")
+            if res.needs_restart and self.confirm("Restart now?", "Some changes take effect after a restart.\n\n"
+                                                  "Save your work, then click Yes to restart now (or No to "
+                                                  "restart later yourself)."):
+                self.backend.run_command("shutdown /r /t 10 /c \"PC Optimizer: restarting to finish the boost\"",
+                                         lambda _l: None)
+                self.log.write("> Restarting in 10 seconds... (run 'shutdown /a' to cancel)")
 
-        self.app.bg(work, done, error=lambda e: (self.boost_btn.set_enabled(True), self.log.write(f"ERROR: {e}")),
+        self.app.bg(lambda: boost.run(self.backend, steps, log), done,
+                    error=lambda e: (self.boost_btn.set_enabled(True), self.log.write(f"ERROR: {e}")),
                     label="Boosting")
+
+
+class BoostDialog(tk.Toplevel):
+    """Choose which One-Click Boost steps to run."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.result = None
+        self.title("One-Click Boost")
+        self.configure(bg=T.CARD)
+        self.transient(parent)
+        self.resizable(False, False)
+        body = tk.Frame(self, bg=T.CARD, padx=22, pady=18)
+        body.pack(fill="both", expand=True)
+        tk.Label(body, text="\u26A1 One-Click Boost", bg=T.CARD, fg=T.TEXT, font=T.F_H2).pack(anchor="w")
+        tk.Label(body, text="Untick anything you want to skip. Every change can be undone in Backup & Restore.",
+                 bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).pack(anchor="w", pady=(2, 12))
+        self.vars = {}
+        for step in boost.STEPS:
+            self.vars[step.id] = tk.BooleanVar(value=step.default)
+            ToggleRow(body, step.title, step.description, self.vars[step.id]).pack(fill="x", pady=4)
+        row = tk.Frame(body, bg=T.CARD)
+        row.pack(fill="x", pady=(14, 0))
+        Button(row, "\u26A1  Boost now", self._ok).pack(side="right")
+        Button(row, "Cancel", self.destroy, color=T.CARD_HI).pack(side="right", padx=8)
+        self.bind("<Escape>", lambda _: self.destroy())
+        self.update_idletasks()
+        x = parent.winfo_rootx() + (parent.winfo_width() - self.winfo_width()) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 3
+        self.geometry(f"+{max(0, x)}+{max(0, y)}")
+        self.grab_set()
+
+    def _ok(self):
+        chosen = {k for k, v in self.vars.items() if v.get()}
+        if chosen:
+            self.result = chosen
+        self.grab_release()
+        self.destroy()
 
 
 # =============================================================================== Gaming
@@ -530,6 +550,14 @@ class TweaksPage(Page):
         Button(brow, "Select recommended", self.recommended, color=T.CARD_HI, small=True).pack(side="right")
         self.list = TweakList(self, c.body, self.backend.tweaks.in_category("speed"))
 
+        pc = self.card("Privacy & bloat", "Registry settings that stop ads, tracking and background extras. "
+                                          "Also part of One-Click Boost.")
+        prow = tk.Frame(pc.body, bg=T.CARD)
+        prow.pack(fill="x", pady=(0, 14))
+        Button(prow, "Apply selected", lambda: self.apply(self.privacy)).pack(side="left")
+        Button(prow, "Undo selected", lambda: self.undo(self.privacy), color=T.CARD_HI).pack(side="left", padx=8)
+        self.privacy = TweakList(self, pc.body, self.backend.tweaks.in_category("privacy"))
+
         s = self.card("Startup apps", "Apps that launch with Windows slow down boot. Disabling works exactly like "
                                       "Task Manager - nothing is deleted.")
         self.st_tree = ttk.Treeview(s.body, columns=("name", "status", "cmd"), show="headings", height=7)
@@ -546,14 +574,16 @@ class TweaksPage(Page):
 
     def on_show(self):
         self.list.refresh()
+        self.privacy.refresh()
         self.load_startup()
 
     def recommended(self):
         for t in self.list.tweaks:
             self.list.vars[t.id].set(t.recommended)
 
-    def apply(self):
-        ids = self.list.selected()
+    def apply(self, lst=None):
+        lst = lst or self.list
+        ids = lst.selected()
         if not ids:
             return
         self.apply_btn.set_enabled(False)
@@ -571,12 +601,13 @@ class TweaksPage(Page):
             self.apply_btn.set_enabled(True)
             if any(mgr.by_id[i].needs_restart for i in ids):
                 self.log.write("> Some tweaks need a restart (or sign out) to take effect.")
-            self.list.refresh()
+            lst.refresh()
 
         self.app.bg(work, done, label="Applying tweaks")
 
-    def undo(self):
-        ids = self.list.selected()
+    def undo(self, lst=None):
+        lst = lst or self.list
+        ids = lst.selected()
         mgr, log = self.backend.tweaks, self.app.logger(self.log)
 
         def work():
@@ -584,7 +615,7 @@ class TweaksPage(Page):
                 if mgr.revert(i):
                     log(f"[OK] Restored original: {mgr.by_id[i].title}")
 
-        self.app.bg(work, lambda _: self.list.refresh(), label="Restoring")
+        self.app.bg(work, lambda _: lst.refresh(), label="Restoring")
 
     def load_startup(self):
         def done(apps):

@@ -39,7 +39,7 @@ class Tweak:
     id: str
     title: str
     description: str
-    category: str  # "gaming" | "speed" | "services" | "game"
+    category: str  # "gaming" | "speed" | "privacy" | "services" | "game" | "registry" | "ai"
     values: list[RegValue] = field(default_factory=list)
     needs_restart: bool = False
     recommended: bool = True
@@ -328,7 +328,125 @@ def build_catalogue() -> list[Tweak]:
             revert_cmd="powercfg /hibernate on",
             check=_reg_check(HKLM, r"SYSTEM\CurrentControlSet\Control\Power", "HibernateEnabled", 0),
         ),
-    ] + _service_tweaks()
+    ] + _privacy_tweaks() + _service_tweaks()
+
+
+TELEMETRY_TASKS = [
+    r"\Microsoft\Windows\Application Experience\Microsoft Compatibility Appraiser",
+    r"\Microsoft\Windows\Application Experience\ProgramDataUpdater",
+    r"\Microsoft\Windows\Customer Experience Improvement Program\Consolidator",
+    r"\Microsoft\Windows\Customer Experience Improvement Program\UsbCeip",
+    r"\Microsoft\Windows\DiskDiagnostic\Microsoft-Windows-DiskDiagnosticDataCollector",
+    r"\Microsoft\Windows\Feedback\Siuf\DmClient",
+    r"\Microsoft\Windows\Feedback\Siuf\DmClientOnScenarioDownload",
+]
+
+
+@dataclass
+class ScheduledTasksTweak(Tweak):
+    """Disable Windows scheduled tasks; undo re-enables only the ones that were enabled before."""
+
+    tasks: list[str] = field(default_factory=list)
+
+    def _states(self, ctx) -> dict[str, bool]:
+        """task -> enabled? (tasks that don't exist on this PC are left out)"""
+        out = {}
+        for t in self.tasks:
+            code, text = ctx.runner(f'schtasks /Query /TN "{t}" /FO CSV /NH')
+            if code == 0 and text.strip():
+                out[t] = "disabled" not in text.lower()
+        return out
+
+    def is_available(self, ctx) -> bool:
+        return bool(self._states(ctx))
+
+    def is_applied(self, ctx) -> bool:
+        states = self._states(ctx)
+        return bool(states) and not any(states.values())
+
+    def snapshot(self, ctx) -> dict:
+        return {"enabled": [t for t, on in self._states(ctx).items() if on]}
+
+    def apply(self, ctx) -> None:
+        for t in self._states(ctx):
+            ctx.runner(f'schtasks /Change /TN "{t}" /Disable')
+
+    def revert(self, ctx, backup) -> None:
+        for t in backup.get("enabled", []):
+            ctx.runner(f'schtasks /Change /TN "{t}" /Enable')
+
+
+def _privacy_tweaks() -> list[Tweak]:
+    pol = r"SOFTWARE\Policies\Microsoft"
+    return [
+        Tweak(
+            "advertising_id_off", "Turn off advertising ID",
+            "Stops apps from using an ID that tracks you for personalised ads.", "privacy",
+            [RegValue(HKCU, r"Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo", "Enabled", 0)],
+        ),
+        Tweak(
+            "lockscreen_ads_off", "No ads or tips on the lock screen and Settings",
+            "Removes 'fun facts', promotions and suggested content from the lock screen and Settings app.",
+            "privacy",
+            [RegValue(HKCU, CDM, "RotatingLockScreenOverlayEnabled", 0),
+             RegValue(HKCU, CDM, "SubscribedContent-338387Enabled", 0),
+             RegValue(HKCU, CDM, "SubscribedContent-338393Enabled", 0),
+             RegValue(HKCU, CDM, "SubscribedContent-353696Enabled", 0)],
+        ),
+        Tweak(
+            "activity_history_off", "Turn off activity history",
+            "Windows stops recording which apps and files you open and uploading the timeline.", "privacy",
+            [RegValue(HKLM, pol + r"\Windows\System", "EnableActivityFeed", 0),
+             RegValue(HKLM, pol + r"\Windows\System", "PublishUserActivities", 0),
+             RegValue(HKLM, pol + r"\Windows\System", "UploadUserActivities", 0)],
+        ),
+        Tweak(
+            "feedback_off", "Stop feedback pop-ups",
+            "Windows stops asking you to rate it or give feedback.", "privacy",
+            [RegValue(HKCU, r"Software\Microsoft\Siuf\Rules", "NumberOfSIUFInPeriod", 0),
+             RegValue(HKLM, pol + r"\Windows\DataCollection", "DoNotShowFeedbackNotifications", 1)],
+        ),
+        Tweak(
+            "widgets_off", "Turn off Widgets (news & weather)",
+            "Removes the Widgets board and stops it loading news in the background.", "privacy",
+            [RegValue(HKLM, pol + r"\Dsh", "AllowNewsAndInterests", 0)],
+            needs_restart=True,
+        ),
+        Tweak(
+            "edge_background_off", "Stop Microsoft Edge running in the background",
+            "Edge stops preloading at sign-in and keeping itself running after you close it, freeing RAM.",
+            "privacy",
+            [RegValue(HKLM, pol + r"\Edge", "StartupBoostEnabled", 0),
+             RegValue(HKLM, pol + r"\Edge", "BackgroundModeEnabled", 0)],
+            warning="Edge opens a little slower the first time after starting your PC.",
+        ),
+        Tweak(
+            "delivery_opt_local", "Don't upload updates to other PCs on the internet",
+            "Windows Update stops using your upload bandwidth to send updates to strangers' PCs.", "privacy",
+            [RegValue(HKLM, pol + r"\Windows\DeliveryOptimization", "DODownloadMode", 0)],
+        ),
+        Tweak(
+            "sticky_keys_off", "Turn off the Sticky Keys pop-up",
+            "Pressing Shift 5 times (easy to do in games) no longer pops up the Sticky Keys window.", "privacy",
+            [RegValue(HKCU, r"Control Panel\Accessibility\StickyKeys", "Flags", "506", "SZ"),
+             RegValue(HKCU, r"Control Panel\Accessibility\ToggleKeys", "Flags", "58", "SZ"),
+             RegValue(HKCU, r"Control Panel\Accessibility\Keyboard Response", "Flags", "122", "SZ")],
+        ),
+        Tweak(
+            "copilot_off", "Turn off Windows Copilot",
+            "Removes the Copilot sidebar and stops it loading with Windows.", "privacy",
+            [RegValue(HKCU, r"Software\Policies\Microsoft\Windows\WindowsCopilot", "TurnOffWindowsCopilot", 1),
+             RegValue(HKLM, pol + r"\Windows\WindowsCopilot", "TurnOffWindowsCopilot", 1)],
+            recommended=False, needs_restart=True,
+            warning="Only if you don't use Copilot.",
+        ),
+        ScheduledTasksTweak(
+            "telemetry_tasks_off", "Turn off background telemetry tasks",
+            "Disables the scheduled tasks that collect compatibility, usage and disk diagnostics data in the "
+            "background (Compatibility Appraiser, CEIP, feedback).", "privacy",
+            tasks=TELEMETRY_TASKS,
+        ),
+    ]
 
 
 def _service_tweaks() -> list[Tweak]:

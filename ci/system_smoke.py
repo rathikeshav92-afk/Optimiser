@@ -102,10 +102,28 @@ def powershell_json_multiline():
     return "ok"
 
 
+def boost_roundtrip():
+    from pcoptimizer import boost
+    from pcoptimizer.tweaks import TELEMETRY_TASKS, TweakManager
+
+    b = Backend()
+    b.tweaks = TweakManager(b.registry, b.tweaks.runner, backup_path=Path(tempfile.mkdtemp()) / "backup.json")
+    res = boost.run(b, {"speed", "privacy", "services"}, print)
+    assert not res.failed, res.failed
+    states = b.tweaks.by_id["telemetry_tasks_off"]._states(b.tweaks)
+    assert states and not any(states.values()), states
+    reverted = b.tweaks.revert_all()
+    assert len(reverted) == len(res.applied), (len(reverted), len(res.applied))
+    after = b.tweaks.by_id["telemetry_tasks_off"]._states(b.tweaks)
+    return (f"{len(res.applied)} applied, {len(res.already)} already, all undone; "
+            f"{sum(after.values())}/{len(TELEMETRY_TASKS)} telemetry tasks enabled again")
+
+
 check("multi-line powershell_json", powershell_json_multiline)
 check("PowerShell scripts parse", scripts_parse)
 check("safe commands run", run_safe_commands)
 check("registry editor round trip", registry_roundtrip)
 check("service control", service_control)
+check("one-click boost apply + undo", boost_roundtrip)
 print("FAILURES:", failures or "none")
 sys.exit(1 if failures else 0)

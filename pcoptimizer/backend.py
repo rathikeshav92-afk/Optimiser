@@ -174,6 +174,15 @@ class _DemoRunner:
             if guid.group(1) not in self.plans:
                 return 1, "Invalid parameters"
             self.active = guid.group(1)
+        if cmd.startswith("schtasks"):
+            import re as _re
+
+            name = _re.search(r'/TN "([^"]+)"', cmd).group(1)
+            disabled = getattr(self, "disabled_tasks", set())
+            if "/Change" in cmd:
+                self.disabled_tasks = (disabled | {name}) if "/Disable" in cmd else (disabled - {name})
+                return 0, "SUCCESS"
+            return 0, f'"{name}","N/A","{"Disabled" if name in disabled else "Ready"}"'
         return 0, ""
 
 

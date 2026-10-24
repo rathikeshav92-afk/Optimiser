@@ -123,6 +123,11 @@ TOOLS = [
     _tool("set_service_running", "Stop or start a Windows service right now (until the next restart). To keep a "
           "service off permanently, use the svc_* ids with apply_optimizations instead.",
           {"name": {"type": "string"}, "running": {"type": "boolean"}, "reason": REASON}),
+    _tool("run_one_click_boost", "Run One-Click Boost: any of restore_point, speed, privacy, services, clean, ram, "
+          "dns. Applies only the recommended, reversible settings.",
+          {"steps": {"type": "array", "items": {"type": "string", "enum": ["restore_point", "speed", "privacy",
+                                                                          "services", "clean", "ram", "dns"]}},
+           "reason": REASON}),
     _tool("open_windows_settings", "Open a Windows Settings page for the user, e.g. 'ms-settings:display', "
           "'ms-settings:network-status', 'ms-settings:windowsupdate', 'ms-settings:sound'.",
           {"uri": {"type": "string"}}),
@@ -575,3 +580,16 @@ class Assistant:
             raise RuntimeError(msg or "failed")
         self.notify(f"{'Started' if running else 'Stopped'} {name}")
         return f"{name} {'started' if running else 'stopped'}."
+
+    def _t_run_one_click_boost(self, steps: list[str], reason: str) -> str:
+        from . import boost
+
+        chosen = [s for s in boost.STEPS if s.id in steps]
+        if not chosen:
+            raise ValueError("Pick at least one step")
+        self._ask("Run One-Click Boost", "\n".join(f"• {s.title}" for s in chosen), reason,
+                  "Every setting can be undone in Backup & Restore. Deleted junk files can't be recovered.")
+        lines: list[str] = []
+        res = boost.run(self.backend, {s.id for s in chosen}, lambda m: (lines.append(m), self.notify(m)))
+        return json.dumps({"summary": boost.summary(res), "changed": res.applied, "failed": res.failed,
+                           "restart_needed": res.needs_restart})
