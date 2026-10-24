@@ -18,6 +18,7 @@ and a toolkit of maintenance commands. **Every change it makes is backed up and 
 | **Balanced Mode** | Switches to the Balanced power plan and puts back your original values for the power-hungry gaming tweaks. Your general speed tweaks stay on. Use it for everyday work and battery life. |
 | **Speed Up PC** | Visual effects set to best performance (smooth fonts kept), transparency off, no startup-app delay, faster menus, Store apps stopped from running in the background, ads and suggestions off, web results removed from Start search, less telemetry, faster shutdown, NTFS last-access timestamps off, optional hibernation off. Also has a **startup-apps manager** that works the same way as Task Manager. |
 | **Services** | Disable services you don't use: telemetry, WAP Push, Maps, Retail Demo, Fax, Error Reporting and Remote Registry are ticked by default. Optional ones are Print Spooler, the Xbox services, Geolocation, Search indexing and SysMain, each with a warning about what stops working. Undo puts back the original startup type. |
+| **Driver Updates** | Checks **Windows Update** for driver updates for your hardware and installs the ones you pick, after creating a restore point. Every driver offered is signed and approved by Microsoft. Also shows your **graphics driver's** version and age with a button to the maker's official download page (NVIDIA, AMD or Intel), lists **devices with problems** (missing driver, failed to start...), lists installed drivers oldest first with ones over 3 years old highlighted, and can **back up all drivers** to your Documents folder. |
 | **Cleaner & RAM** | Scans and cleans user and Windows temp files, the Windows Update cache, the Delivery Optimization cache, thumbnail caches, crash dumps, old logs, browser caches and the Recycle Bin. **Free up RAM** trims the memory every app holds, and you can flush the DNS cache. |
 | **CMD Toolkit** | One-click `sfc /scannow`, `DISM /RestoreHealth`, `chkdsk /scan`, WinSxS cleanup, TRIM/defrag, Disk Cleanup, DNS flush, IP renew, Winsock/TCP reset, TCP auto-tuning, restore point, `winget upgrade --all`, Explorer restart and a power report. Output streams live. You can also run your own commands. |
 | **Benchmark** | A roughly 20-second test of single-core and all-core CPU, RAM copy speed, disk write speed, 4K disk writes, background CPU load and free RAM. Your first run is saved as **Before**, and later runs show **After** with the % change for each test. |
@@ -111,6 +112,7 @@ pcoptimizer/
   benchmark.py     before/after benchmark
   ai_assistant.py  Claude-powered assistant: tools, approval gate, read-only command detection
   ai_settings.py   API key storage (Windows DPAPI)
+  drivers.py       Windows Update driver search/install, driver inventory, problem devices
   screentime.py    screen time tracker, storage and daily/weekly/monthly reports
   backend.py       facade used by the UI, plus a demo backend
   ui/              Tkinter interface (theme, widgets, pages)

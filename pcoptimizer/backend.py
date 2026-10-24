@@ -7,7 +7,7 @@ import time
 from types import SimpleNamespace
 from typing import Callable
 
-from . import benchmark, cleaner, games, processes, screentime, sensors, system_info
+from . import benchmark, cleaner, drivers, games, processes, screentime, sensors, system_info
 from .ai_assistant import AIChangeLog
 from .platform_utils import is_admin, stream
 from .registry import FakeRegistry, default_registry
@@ -97,6 +97,30 @@ class Backend:
 
     def clear_screentime(self) -> None:
         screentime.clear()
+
+    # drivers
+    def search_driver_updates(self) -> list[drivers.DriverUpdate]:
+        return drivers.search_updates()
+
+    def install_driver_updates(self, ids: list[str], log: Log) -> drivers.InstallResult:
+        return drivers.install_updates(ids, self.run_command, log)
+
+    def installed_drivers(self) -> list[drivers.InstalledDriver]:
+        return drivers.installed_drivers()
+
+    def problem_devices(self) -> list[drivers.ProblemDevice]:
+        return drivers.problem_devices()
+
+    def backup_drivers(self, log: Log):
+        """Export every third-party driver to Documents. Returns (exit code, folder)."""
+        folder = drivers.backup_folder()
+        folder.mkdir(parents=True, exist_ok=True)
+        return self.run_command(drivers.backup_command(folder), log, timeout=30 * 60), folder
+
+    def open_url(self, url: str) -> None:
+        import webbrowser
+
+        webbrowser.open(url)
 
     def shutdown(self) -> None:
         self.sensors.stop()
@@ -230,6 +254,57 @@ class DemoBackend(Backend):
 
     def clear_screentime(self):
         screentime.clear(self._screentime_db())
+
+    DEMO_DRIVER_UPDATES = [
+            drivers.DriverUpdate("8a1e2d4c-1111-4c3b-9f00-000000000001", "Realtek Semiconductor Corp. - Audio - "
+                                 "6.0.9615.1", "MEDIA", "Realtek", "Realtek High Definition Audio", "2026-08-14",
+                                 38 * 1024 ** 2),
+            drivers.DriverUpdate("8a1e2d4c-2222-4c3b-9f00-000000000002", "Intel - Net - 23.60.1.2",
+                                 "Net", "Intel", "Intel(R) Wi-Fi 6 AX200 160MHz", "2026-07-02", 22 * 1024 ** 2),
+            drivers.DriverUpdate("8a1e2d4c-3333-4c3b-9f00-000000000003", "Advanced Micro Devices, Inc. - System - "
+                                 "6.0.0.21", "System", "AMD", "AMD GPIO Controller", "2026-05-20", 2 * 1024 ** 2),
+    ]
+
+    def search_driver_updates(self):
+        time.sleep(1.5)
+        installed = getattr(self, "_drivers_installed", set())
+        return [u for u in self.DEMO_DRIVER_UPDATES if u.id not in installed]
+
+    def install_driver_updates(self, ids, log):
+        for msg in ("Looking up the selected drivers...", f"Downloading {len(ids)} driver(s)...",
+                    "Installing (this can take a few minutes, your screen may flicker)..."):
+            log(msg)
+            time.sleep(0.6)
+        self._drivers_installed = getattr(self, "_drivers_installed", set()) | set(ids)
+        titles = {u.id: u.title for u in self.DEMO_DRIVER_UPDATES}
+        return drivers.InstallResult([titles.get(i, i) for i in ids], [], True, False)
+
+    def installed_drivers(self):
+        return drivers.parse_installed([
+            {"Device": "NVIDIA GeForce RTX 3060", "Class": "DISPLAY", "Provider": "NVIDIA", "Version": "32.0.15.6094",
+             "Date": "2024-09-19", "Inf": "oem41.inf"},
+            {"Device": "Realtek High Definition Audio", "Class": "MEDIA", "Provider": "Realtek",
+             "Version": "6.0.9235.1", "Date": "2021-08-30", "Inf": "oem12.inf"},
+            {"Device": "Intel(R) Wi-Fi 6 AX200 160MHz", "Class": "NET", "Provider": "Intel",
+             "Version": "22.150.0.3", "Date": "2022-06-07", "Inf": "oem7.inf"},
+            {"Device": "AMD GPIO Controller", "Class": "SYSTEM", "Provider": "Advanced Micro Devices, Inc",
+             "Version": "2.2.0.130", "Date": "2020-03-26", "Inf": "oem3.inf"},
+            {"Device": "Logitech G502 HERO", "Class": "HIDCLASS", "Provider": "Logitech", "Version": "2023.5.15",
+             "Date": "2023-05-15", "Inf": "oem55.inf"},
+        ])
+
+    def problem_devices(self):
+        return [drivers.ProblemDevice("PCI Simple Communications Controller", "Unknown", 28, "PCI\\VEN_8086")]
+
+    def backup_drivers(self, log):
+        for name in ("oem41.inf", "oem12.inf", "oem7.inf", "oem3.inf", "oem55.inf"):
+            log(f"Exporting driver package:   {name}")
+            time.sleep(0.15)
+        log("Total driver packages:  5")
+        return 0, drivers.backup_folder()
+
+    def open_url(self, url):
+        pass
 
     def run_benchmark(self, progress):
         base = {"cpu_single": 1650, "cpu_multi": 14800, "ram_copy": 11.8, "disk_write": 2400, "disk_iops": 2100,

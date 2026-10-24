@@ -35,6 +35,18 @@ jobs:
           name: screentime-smoke
           path: screentime-smoke.txt
           if-no-files-found: ignore
+      - name: Smoke-test driver updates
+        shell: pwsh
+        run: |
+          python ci/drivers_smoke.py *>&1 | Tee-Object -FilePath drivers-smoke.txt
+          exit $LASTEXITCODE
+      - name: Upload driver smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drivers-smoke
+          path: drivers-smoke.txt
+          if-no-files-found: ignore
       - name: Build PCOptimizer.exe
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --uac-admin --collect-submodules anthropic --name PCOptimizer launcher.py
       - name: Self-test the built exe

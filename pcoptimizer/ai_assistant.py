@@ -122,6 +122,13 @@ TOOLS = [
     _tool("get_screen_time", "The user's screen time per app for today, this week (Mon-Sun) or this month, "
           "with the previous period's total for comparison. Only counts time since tracking was turned on.",
           {"period": {"type": "string", "enum": ["day", "week", "month"]}}),
+    _tool("get_driver_status", "Devices with driver problems (missing, failed, disabled) and the installed "
+          "third-party drivers with their dates, oldest first."),
+    _tool("check_driver_updates", "Search Windows Update for driver updates for this PC. Takes 30 s to 3 minutes. "
+          "Returns update ids for install_driver_updates."),
+    _tool("install_driver_updates", "Download and install Windows Update driver updates by id (from "
+          "check_driver_updates). Create a restore point first. May need a restart.",
+          {"ids": IDS, "reason": REASON}),
 ]
 
 
@@ -502,3 +509,38 @@ class Assistant:
             "apps": [{"app": a.name, "time": fmt_duration(a.seconds)} for a in rep.apps[:15]],
             "tracking_on": self.backend.screentime_enabled(),
         })
+
+    def _t_get_driver_status(self) -> str:
+        self.notify("Checking your drivers...")
+        problems = self.backend.problem_devices()
+        installed = self.backend.installed_drivers()
+        return json.dumps({
+            "problem_devices": [{"name": p.name, "class": p.device_class, "problem": p.problem, "code": p.code}
+                                for p in problems],
+            "drivers": [{"device": d.device, "maker": d.provider, "version": d.version, "date": d.date}
+                        for d in installed[:40]],
+        })
+
+    def _t_check_driver_updates(self) -> str:
+        self.notify("Checking Windows Update for drivers (can take a few minutes)...")
+        updates = self.backend.search_driver_updates()
+        return json.dumps([{"id": u.id, "title": u.title, "device": u.model, "class": u.device_class,
+                            "date": u.date, "size": human(u.size_bytes)} for u in updates]) if updates else \
+            "No driver updates available from Windows Update."
+
+    def _t_install_driver_updates(self, ids: list[str], reason: str) -> str:
+        from .drivers import GUID_RE
+
+        if not ids or not all(GUID_RE.match(i) for i in ids):
+            raise ValueError("Pass update ids from check_driver_updates.")
+        known = {u.id: u.title for u in self.backend.search_driver_updates()}
+        missing = [i for i in ids if i not in known]
+        if missing:
+            raise ValueError(f"These ids are not offered any more: {missing}. Call check_driver_updates again.")
+        self._ask("Install driver updates", "\n".join(f"• {known[i]}" for i in ids), reason,
+                  "Your screen or network may blink while drivers install. A restart may be needed.")
+        lines: list[str] = []
+        res = self.backend.install_driver_updates(ids, lines.append)
+        self.notify(f"Installed {len(res.installed)} driver(s)")
+        return json.dumps({"installed": res.installed, "failed": res.failed, "restart_needed": res.reboot,
+                           "progress": lines[-5:]})

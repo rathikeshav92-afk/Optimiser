@@ -55,7 +55,7 @@ def selftest(path: str) -> int:
 
         import anthropic
 
-        for mod in ("ai_assistant", "backend", "benchmark", "games", "screentime", "sensors", "services", "ui.app",
+        for mod in ("ai_assistant", "backend", "benchmark", "drivers", "games", "screentime", "sensors", "services", "ui.app",
                     "ui.pages"):
             importlib.import_module(f"pcoptimizer.{mod}")
 

@@ -22,6 +22,7 @@ NAV = [
     ("balanced", "Balanced Mode", "◐", pages.BalancedPage),
     ("tweaks", "Speed Up PC", "⚙", pages.TweaksPage),
     ("services", "Services", "☰", pages.ServicesPage),
+    ("drivers", "Driver Updates", "⇪", pages.DriversPage),
     ("cleaner", "Cleaner & RAM", "♲", pages.CleanerPage),
     ("commands", "CMD Toolkit", "❯", pages.CommandsPage),
     ("benchmark", "Benchmark", "⏱", pages.BenchmarkPage),

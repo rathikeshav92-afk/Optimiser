@@ -10,6 +10,7 @@ from tkinter import filedialog, messagebox, ttk
 from .. import benchmark, profiles
 from ..cleaner import human
 from ..commands import COMMANDS
+from ..drivers import OLD_DRIVER_YEARS
 from ..system_info import gb
 from . import theme as T
 from .widgets import Bar, Button, Card, LogBox, ScoreGauge, ScrollFrame, ToggleRow
@@ -1703,3 +1704,242 @@ class ScreenTimePage(Page):
                      anchor="e").grid(row=r, column=2, sticky="e")
             tk.Label(grid, text=f"{100 * secs / rep.total:.0f}%", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL, width=5,
                      anchor="e").grid(row=r, column=3, sticky="e")
+
+
+# =============================================================================== Driver updates
+
+
+class DriversPage(Page):
+    def build(self):
+        self.header("Driver Updates", "Keep your hardware running fast and stable. Updates come from Windows Update, "
+                                      "so every driver is signed and approved by Microsoft for your PC.")
+        up = self.card("Available driver updates")
+        row = tk.Frame(up.body, bg=T.CARD)
+        row.pack(fill="x")
+        self.check_btn = Button(row, "↻  Check for driver updates", self.check)
+        self.check_btn.pack(side="left")
+        self.install_btn = Button(row, "Install selected", self.install, color=T.GOOD)
+        self.install_btn.pack(side="left", padx=8)
+        self.install_btn.set_enabled(False)
+        self.up_status = tk.Label(row, text="Not checked yet", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL)
+        self.up_status.pack(side="right")
+        self.progress = ttk.Progressbar(up.body, mode="indeterminate")
+        self.updates_box = tk.Frame(up.body, bg=T.CARD)
+        self.updates_box.pack(fill="x", pady=(12, 0))
+        tk.Label(up.body, text="A restore point is created before installing, so you can go back if a driver causes "
+                               "trouble. You can also roll back a single driver in Device Manager → the device "
+                               "→ Properties → Driver → Roll Back Driver.",
+                 bg=T.CARD, fg=T.MUTED, font=T.F_SMALL, wraplength=840, justify="left").pack(anchor="w", pady=(12, 0))
+        self.update_vars: dict[str, tk.BooleanVar] = {}
+        self.updates = []
+
+        self.gpu_card = self.card("Graphics driver")
+        tk.Label(self.gpu_card.body, text="Reading...", bg=T.CARD, fg=T.MUTED).pack(anchor="w")
+
+        self.prob_card = self.card("Devices with problems")
+        self.drivers_card = self.card("Installed drivers",
+                                      "Drivers from hardware makers (Microsoft's built-in drivers are hidden), oldest "
+                                      f"first. Drivers older than {OLD_DRIVER_YEARS} years are highlighted - check the maker's site "
+                                      "for a newer one.")
+        cols = ("device", "provider", "version", "date")
+        self.tree = ttk.Treeview(self.drivers_card.body, columns=cols, show="headings", height=10)
+        for col, title, w in (("device", "Device", 300), ("provider", "Maker", 170), ("version", "Version", 120),
+                              ("date", "Driver date", 190)):
+            self.tree.heading(col, text=title)
+            self.tree.column(col, width=w, anchor="w")
+        self.tree.tag_configure("old", foreground=T.WARN)
+        self.tree.pack(fill="x")
+        brow = tk.Frame(self.drivers_card.body, bg=T.CARD)
+        brow.pack(fill="x", pady=(10, 0))
+        self.backup_btn = Button(brow, "Back up all drivers", self.backup, color=T.CARD_HI, small=True)
+        self.backup_btn.pack(side="left")
+        Button(brow, "Open Device Manager", lambda: self.backend.run_command("start devmgmt.msc", lambda _l: None),
+               color=T.CARD_HI, small=True).pack(side="left", padx=8)
+        self.log = self.log_card()
+        self._loaded = False
+        self.app.on_specs(self._show_gpu)
+
+    def on_show(self):
+        if not self._loaded:
+            self._loaded = True
+            self.load_inventory()
+
+    # ------------------------------------------------------------------ inventory
+    def load_inventory(self):
+        def work():
+            return self.backend.installed_drivers(), self.backend.problem_devices()
+
+        def done(res):
+            installed, problems = res
+            self._installed = installed
+            self.tree.delete(*self.tree.get_children())
+            for i, d in enumerate(installed):
+                age = d.age_years()
+                old = age is not None and age >= OLD_DRIVER_YEARS
+                self.tree.insert("", "end", iid=str(i), tags=("old",) if old else (),
+                                 values=(d.device, d.provider, d.version,
+                                         d.date + (f"  ({age:.0f} years old)" if old else "")))
+            self._render_problems(problems)
+            if self.app.specs:
+                self._show_gpu(self.app.specs, None)
+
+        self.app.bg(work, done, error=lambda e: self.log.write(f"[FAILED] Couldn't read drivers: {e}"),
+                    label="Reading drivers")
+
+    def _render_problems(self, problems):
+        body = self.prob_card.body
+        for w in body.winfo_children():
+            w.destroy()
+        real = [p for p in problems if p.severity == "problem"]
+        if not problems:
+            tk.Label(body, text="✔  All devices are working properly.", bg=T.CARD, fg=T.GOOD).pack(anchor="w")
+            return
+        for p in sorted(problems, key=lambda p: p.severity != "problem"):
+            row = tk.Frame(body, bg=T.CARD)
+            row.pack(fill="x", pady=3)
+            icon, color = ("⚠", T.WARN) if p.severity == "problem" else ("○", T.MUTED)
+            tk.Label(row, text=f"{icon}  {p.name}", bg=T.CARD, fg=T.TEXT, font=(T.FAMILY, 10, "bold")).pack(side="left")
+            tk.Label(row, text=p.problem, bg=T.CARD, fg=color, font=T.F_SMALL).pack(side="right")
+        if real:
+            tk.Label(body, text="Tip: run 'Check for driver updates' above - Windows Update often has the missing "
+                                "driver. Or ask the AI Assistant to help fix these devices.",
+                     bg=T.CARD, fg=T.MUTED, font=T.F_SMALL, wraplength=840, justify="left").pack(anchor="w", pady=(8, 0))
+
+    def _show_gpu(self, specs, _rating):
+        from ..drivers import gpu_download
+
+        body = self.gpu_card.body
+        for w in body.winfo_children():
+            w.destroy()
+        gpu = specs.primary_gpu
+        if not gpu:
+            tk.Label(body, text="No graphics card detected.", bg=T.CARD, fg=T.MUTED).pack(anchor="w")
+            return
+        installed = next((d for d in getattr(self, "_installed", []) if d.device == gpu.name), None)
+        row = tk.Frame(body, bg=T.CARD)
+        row.pack(fill="x")
+        info = tk.Frame(row, bg=T.CARD)
+        info.pack(side="left", fill="x", expand=True)
+        tk.Label(info, text=gpu.name, bg=T.CARD, fg=T.TEXT, font=(T.FAMILY, 11, "bold")).pack(anchor="w")
+        detail = f"Driver {gpu.driver}" if gpu.driver else "Driver version unknown"
+        age = installed.age_years() if installed else None
+        if installed and installed.date:
+            detail += f"  •  released {installed.date}"
+        tk.Label(info, text=detail, bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).pack(anchor="w")
+        if age is not None:
+            months = int(age * 12)
+            fresh = months < 4
+            tk.Label(info, text=("✔ Recent driver" if fresh else f"⚠ About {months} months old - "
+                                 "a newer driver likely adds FPS and fixes for recent games"),
+                     bg=T.CARD, fg=T.GOOD if fresh else T.WARN, font=T.F_SMALL).pack(anchor="w", pady=(2, 0))
+        link = gpu_download(gpu.name)
+        if link:
+            vendor, url = link
+            Button(row, f"Get latest {vendor} driver", lambda: self.backend.open_url(url), small=True).pack(side="right")
+        tk.Label(body, text="Graphics drivers on Windows Update are often months behind. For gaming, install the "
+                            "latest one from your graphics card maker (the button opens their official page).",
+                 bg=T.CARD, fg=T.MUTED, font=T.F_SMALL, wraplength=840, justify="left").pack(anchor="w", pady=(10, 0))
+
+    # ------------------------------------------------------------------ updates
+    def check(self):
+        self.check_btn.set_enabled(False)
+        self.install_btn.set_enabled(False)
+        self.up_status.configure(text="Checking Windows Update - this can take a few minutes...", fg=T.TEXT)
+        self.progress.pack(fill="x", pady=(12, 0), before=self.updates_box)
+        self.progress.start(12)
+
+        def done(updates):
+            self._stop_progress()
+            self.updates = updates
+            self._render_updates()
+
+        def error(exc):
+            self._stop_progress()
+            self.up_status.configure(text="Check failed", fg=T.BAD)
+            self.log.write(f"[FAILED] {exc}")
+
+        self.app.bg(self.backend.search_driver_updates, done, error, label="Checking for drivers")
+
+    def _stop_progress(self):
+        self.progress.stop()
+        self.progress.pack_forget()
+        self.check_btn.set_enabled(True)
+
+    def _render_updates(self):
+        for w in self.updates_box.winfo_children():
+            w.destroy()
+        self.update_vars = {}
+        if not self.updates:
+            self.up_status.configure(text=f"Checked {time.strftime('%H:%M')}", fg=T.MUTED)
+            tk.Label(self.updates_box, text="✔  Your drivers are up to date - Windows Update has nothing new.",
+                     bg=T.CARD, fg=T.GOOD).pack(anchor="w")
+            return
+        self.up_status.configure(text=f"{len(self.updates)} update{'s' if len(self.updates) > 1 else ''} available",
+                                 fg=T.WARN)
+        for i, u in enumerate(self.updates):
+            if i:
+                tk.Frame(self.updates_box, bg=T.BORDER, height=1).pack(fill="x", pady=7)
+            var = tk.BooleanVar(value=True)
+            var.trace_add("write", lambda *_: self.install_btn.set_enabled(any(v.get() for v in self.update_vars.values())))
+            self.update_vars[u.id] = var
+            title = u.model or u.title
+            desc = " • ".join(x for x in (u.manufacturer, u.device_class.title(), f"driver date {u.date}" if u.date
+                                               else "", human(u.size_bytes) if u.size_bytes else "") if x)
+            ToggleRow(self.updates_box, title, f"{u.title}\n{desc}", var).pack(fill="x")
+        self.install_btn.set_enabled(True)
+
+    def install(self):
+        ids = [i for i, v in self.update_vars.items() if v.get()]
+        if not ids or not self.confirm("Install drivers", f"Install {len(ids)} driver update(s)?\n\nA restore point "
+                                       "is created first. Your screen or network may blink while drivers install, "
+                                       "and a restart may be needed."):
+            return
+        self.install_btn.set_enabled(False)
+        self.check_btn.set_enabled(False)
+        log = self.app.logger(self.log)
+        b = self.backend
+
+        def work():
+            restore = next(c for c in COMMANDS if c.id == "restore_point")
+            log("> Creating a restore point...")
+            if b.run_command(restore.command, lambda _l: None) != 0:
+                log("[FAILED] Couldn't create a restore point (System Protection may be off) - continuing")
+            else:
+                log("[OK] Restore point created")
+            log("> Installing driver updates from Windows Update...")
+            return b.install_driver_updates(ids, log)
+
+        def done(res):
+            self.check_btn.set_enabled(True)
+            if res.missing:
+                self.log.write("[FAILED] Those updates are no longer offered - check again.")
+            for t in res.installed:
+                self.log.write(f"[OK] Installed {t}")
+            for t in res.failed:
+                self.log.write(f"[FAILED] {t}")
+            if res.reboot:
+                self.log.write("> Restart your PC to finish installing the drivers.")
+            self.load_inventory()
+            self.check()
+
+        def error(exc):
+            self.check_btn.set_enabled(True)
+            self.install_btn.set_enabled(True)
+            self.log.write(f"[FAILED] {exc}")
+
+        self.app.bg(work, done, error, label="Installing drivers")
+
+    def backup(self):
+        self.backup_btn.set_enabled(False)
+        log = self.app.logger(self.log)
+        self.log.write("> Backing up your drivers...")
+
+        def done(res):
+            code, folder = res
+            self.backup_btn.set_enabled(True)
+            self.log.write(f"[OK] Drivers backed up to {folder}" if code == 0 else
+                           f"[FAILED] Backup finished with errors (code {code})")
+
+        self.app.bg(lambda: self.backend.backup_drivers(log), done,
+                    error=lambda e: (self.backup_btn.set_enabled(True), self.log.write(f"[FAILED] {e}")),
+                    label="Backing up drivers")
