@@ -116,7 +116,7 @@ PROTECTED = {s.lower() for s in (
 )}
 
 LIST_RUNNING = r"""
-Get-Service | Where-Object Status -eq 'Running' | Sort-Object DisplayName | ForEach-Object {
+Get-Service -ErrorAction SilentlyContinue | Where-Object Status -eq 'Running' | Sort-Object DisplayName | ForEach-Object {
     [pscustomobject]@{ Name = $_.Name; DisplayName = $_.DisplayName; StartType = [string]$_.StartType
                        CanStop = [bool]$_.CanStop }
 }

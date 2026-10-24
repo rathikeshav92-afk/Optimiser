@@ -5,6 +5,8 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 
+from .platform_utils import QUIET
+
 
 @dataclass(frozen=True)
 class MaintenanceCommand:
@@ -26,7 +28,7 @@ class MaintenanceCommand:
 def ps(id: str, title: str, description: str, script: str, group: str, **kw) -> MaintenanceCommand:
     """A PowerShell command. It runs -EncodedCommand so quotes and $ never clash with cmd.exe."""
     script = script.strip()
-    encoded = base64.b64encode(script.encode("utf-16-le")).decode()
+    encoded = base64.b64encode((QUIET + script).encode("utf-16-le")).decode()
     return MaintenanceCommand(id, title, description,
                               f"powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}", group,
                               display=script, **kw)

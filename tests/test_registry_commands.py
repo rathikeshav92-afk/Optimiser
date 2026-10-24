@@ -96,6 +96,6 @@ def test_commands_are_unique_and_encoded_scripts_roundtrip():
     for c in COMMANDS:
         if "-EncodedCommand" in c.command:
             decoded = base64.b64decode(c.command.split()[-1]).decode("utf-16-le")
-            assert decoded == c.display
+            assert decoded.endswith(c.display) and "ProgressPreference" in decoded
     destructive = {"clear_prefetch", "empty_recycle_bin", "wifi_passwords", "reset_windows_update"}
     assert all(next(c for c in COMMANDS if c.id == i).warning for i in destructive)

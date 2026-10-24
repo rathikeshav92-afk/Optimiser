@@ -70,9 +70,13 @@ def run(cmd: str | list[str], timeout: float | None = 120, shell: bool = False) 
         return subprocess.CompletedProcess(cmd, returncode=-1, stdout="", stderr=str(exc))
 
 
+# Progress bars ("Preparing modules for first use...") would otherwise come out as raw CLIXML text.
+QUIET = "$ProgressPreference = 'SilentlyContinue'\n"
+
+
 def powershell(script: str, timeout: float | None = 120) -> subprocess.CompletedProcess:
     return run(
-        ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+        ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", QUIET + script],
         timeout=timeout,
     )
 
@@ -80,7 +84,9 @@ def powershell(script: str, timeout: float | None = 120) -> subprocess.Completed
 def powershell_json(script: str, timeout: float | None = 120):
     """Run a PowerShell snippet whose output is piped to ConvertTo-Json and parse it."""
     result = powershell(f"{script} | ConvertTo-Json -Depth 4 -Compress", timeout=timeout)
-    if result.returncode != 0 or not result.stdout.strip():
+    # A non-zero exit code can just mean one item in the pipeline errored (e.g. a service Windows won't
+    # describe); the JSON for everything else is still valid, so use it when it parses.
+    if not result.stdout.strip():
         return None
     try:
         return json.loads(result.stdout)

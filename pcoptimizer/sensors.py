@@ -15,6 +15,7 @@ from .platform_utils import CREATE_NO_WINDOW, IS_WINDOWS
 
 LOOP_SCRIPT = r"""
 $ErrorActionPreference = 'SilentlyContinue'
+$ProgressPreference = 'SilentlyContinue'
 $smi = (Get-Command nvidia-smi -ErrorAction SilentlyContinue).Source
 while ($true) {
     $t = @(Get-CimInstance Win32_PerfFormattedData_Counters_ThermalZoneInformation |
