@@ -115,6 +115,14 @@ TOOLS = [
           {"hive": {"type": "string", "enum": ["HKCU", "HKLM"]}, "key": {"type": "string"},
            "name": {"type": "string"}, "value_type": {"type": "string", "enum": ["DWORD", "QWORD", "SZ", "EXPAND_SZ"]},
            "value": {"type": "string"}, "reason": REASON}),
+    _tool("delete_registry_value", "Delete one registry value. Backed up first; undoable in Backup & Restore.",
+          {"hive": {"type": "string", "enum": ["HKCU", "HKLM"]}, "key": {"type": "string"},
+           "name": {"type": "string"}, "reason": REASON}),
+    _tool("list_running_services", "Every running Windows service with its start type, and whether it is "
+          "protected (needed by Windows, can't be stopped)."),
+    _tool("set_service_running", "Stop or start a Windows service right now (until the next restart). To keep a "
+          "service off permanently, use the svc_* ids with apply_optimizations instead.",
+          {"name": {"type": "string"}, "running": {"type": "boolean"}, "reason": REASON}),
     _tool("open_windows_settings", "Open a Windows Settings page for the user, e.g. 'ms-settings:display', "
           "'ms-settings:network-status', 'ms-settings:windowsupdate', 'ms-settings:sound'.",
           {"uri": {"type": "string"}}),
@@ -544,3 +552,26 @@ class Assistant:
         self.notify(f"Installed {len(res.installed)} driver(s)")
         return json.dumps({"installed": res.installed, "failed": res.failed, "restart_needed": res.reboot,
                            "progress": lines[-5:]})
+
+    def _t_delete_registry_value(self, hive: str, key: str, name: str, reason: str) -> str:
+        cur = self.backend.registry.get(hive, key, name)
+        if cur is None:
+            return "That value doesn't exist - nothing to delete."
+        self._ask("Delete a registry value", f"{hive}\\{key}\n{name} (currently {cur[0]!r})", reason,
+                  "The value is backed up - you can undo this in Backup & Restore.")
+        change_id = self.backend.regedit.delete_value(hive, key, name)
+        self.notify(f"Deleted {name}")
+        return f"Deleted. Undo with undo_optimizations(['{change_id}'])."
+
+    def _t_list_running_services(self) -> str:
+        self.notify("Listing running services...")
+        return json.dumps([{"name": s.name, "display": s.display_name, "starts": s.start_type,
+                            "protected": s.protected} for s in self.backend.running_services()])
+
+    def _t_set_service_running(self, name: str, running: bool, reason: str) -> str:
+        self._ask(f"{'Start' if running else 'Stop'} service: {name}", "Until the next restart.", reason)
+        ok, msg = self.backend.set_service_running(name, running)
+        if not ok:
+            raise RuntimeError(msg or "failed")
+        self.notify(f"{'Started' if running else 'Stopped'} {name}")
+        return f"{name} {'started' if running else 'stopped'}."

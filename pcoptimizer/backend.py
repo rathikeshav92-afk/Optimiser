@@ -9,6 +9,7 @@ from typing import Callable
 
 from . import benchmark, cleaner, drivers, games, processes, screentime, sensors, system_info
 from .ai_assistant import AIChangeLog
+from .regedit import RegistryEditor
 from .platform_utils import is_admin, stream
 from .registry import FakeRegistry, default_registry
 from .tweaks import GUID_RE, TweakManager, shell_runner
@@ -26,6 +27,7 @@ class Backend:
         self.clean_targets = cleaner.build_targets()
         self.games = games.GameLibrary(self.tweaks)
         self.ai_changes = AIChangeLog(self.tweaks)
+        self.regedit = RegistryEditor(self.tweaks, export=self._reg_export)
         self.bench_history = benchmark.BenchmarkHistory()
         self.sensors = sensors.SensorMonitor()
 
@@ -117,6 +119,29 @@ class Backend:
         folder.mkdir(parents=True, exist_ok=True)
         return self.run_command(drivers.backup_command(folder), log, timeout=30 * 60), folder
 
+    def _reg_export(self, hive: str, key: str, target) -> bool:
+        from .platform_utils import run
+
+        return run(["reg", "export", f"{hive}\\{key}", str(target), "/y"], timeout=120).returncode == 0
+
+    def running_services(self):
+        from . import services
+
+        return services.running_services()
+
+    def set_service_running(self, name: str, run: bool):
+        from . import services
+
+        return services.set_running(name, run)
+
+    def open_in_regedit(self, hive: str, key: str) -> None:
+        """Open Windows' Registry Editor at this key (it reopens wherever LastKey points)."""
+        from .regedit import FULL_HIVE
+
+        self.registry.set("HKCU", r"Software\Microsoft\Windows\CurrentVersion\Applets\Regedit", "LastKey",
+                          f"Computer\\{FULL_HIVE[hive]}" + (f"\\{key}" if key else ""), "SZ")
+        self.run_command("start regedit.exe", lambda _l: None)
+
     def open_url(self, url: str) -> None:
         import webbrowser
 
@@ -167,6 +192,15 @@ class DemoBackend(Backend):
         self.clean_targets = cleaner.build_targets()
         self.games = games.GameLibrary(self.tweaks, data / "games.json")
         self.ai_changes = AIChangeLog(self.tweaks, data / "ai_changes.json")
+        self.regedit = RegistryEditor(self.tweaks, export=lambda h, k, f: f.write_text(f"Demo export of {h}\\{k}")
+                                      is not None, path=data / "registry_changes.json")
+        for name, (val, kind) in {"MenuShowDelay": ("400", "SZ"), "FontSmoothing": ("2", "SZ"),
+                                  "UserPreferencesMask": (bytes.fromhex("9e1e078012000000"), "BINARY"),
+                                  "WallPaper": (r"C:\Windows\web\wallpaper\Windows\img0.jpg", "SZ"),
+                                  "ScreenSaveActive": ("1", "SZ"), "AutoEndTasks": (0, "DWORD")}.items():
+            self.registry.set("HKCU", r"Control Panel\Desktop", name, val, kind)
+        for name in ("WindowMetrics", "Colors", "LanguageConfiguration"):
+            self.registry.set("HKCU", rf"Control Panel\Desktop\{name}", "Placeholder", "1", "SZ")
         self.bench_history = benchmark.BenchmarkHistory(data / "benchmarks.json")
         self.sensors = sensors.SensorMonitor()
         for svc in ("DiagTrack", "dmwappushservice", "MapsBroker", "RetailDemo", "WerSvc", "Spooler",
@@ -304,6 +338,29 @@ class DemoBackend(Backend):
         return 0, drivers.backup_folder()
 
     def open_url(self, url):
+        pass
+
+    def running_services(self):
+        from .services import RunningService
+
+        on = getattr(self, "_stopped", set())
+        return [RunningService(n, d, t, True) for n, d, t in (
+            ("AudioSrv", "Windows Audio", "Automatic"), ("Spooler", "Print Spooler", "Automatic"),
+            ("DiagTrack", "Connected User Experiences and Telemetry", "Automatic"),
+            ("WSearch", "Windows Search", "Automatic"), ("SysMain", "SysMain", "Automatic"),
+            ("WinDefend", "Microsoft Defender Antivirus Service", "Automatic"),
+            ("TabletInputService", "Touch Keyboard and Handwriting Panel Service", "Manual"),
+            ("lfsvc", "Geolocation Service", "Manual")) if n not in on]
+
+    def set_service_running(self, name, run):
+        from .services import set_running
+
+        if not run and name.lower() in {"windefend", "audiosrv"}:
+            return set_running(name, run)  # exercises the real protection check
+        self._stopped = getattr(self, "_stopped", set()) | ({name} if not run else set())
+        return True, ""
+
+    def open_in_regedit(self, hive, key):
         pass
 
     def run_benchmark(self, progress):

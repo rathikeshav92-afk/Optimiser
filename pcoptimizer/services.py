@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from .tweaks import RegValue, Tweak
@@ -64,6 +65,19 @@ def build_service_tweaks() -> list[Tweak]:
              "Sends crash reports to Microsoft after an app crashes.", recommended=True),
         _svc("RemoteRegistry", "Remote Registry",
              "Lets other computers edit this PC's registry. Better off for security too.", recommended=True),
+        _svc("TrkWks", "Distributed Link Tracking Client",
+             "Tracks shortcuts to files moved between network PCs. Not needed at home.", recommended=True),
+        _svc("WMPNetworkSvc", "Windows Media Player Network Sharing",
+             "Shares your media library with other devices on the network.", recommended=True),
+        _svc("AJRouter", "AllJoyn Router", "Smart-home device protocol that's almost never used.", recommended=True),
+        _svc("wisvc", "Windows Insider Service", "Only needed if you're in the Windows Insider Program.",
+             recommended=True),
+        _svc("PhoneSvc", "Phone Service", "Manages telephony state for apps. Not needed on a desktop PC.",
+             recommended=True),
+        _svc("WpcMonSvc", "Parental Controls", "Enforces Microsoft Family Safety limits.",
+             warning="Only disable if nobody uses Microsoft Family Safety on this PC."),
+        _svc("SCardSvr", "Smart Card", "Reads smart cards (e.g. some work or ID cards).",
+             warning="Only disable if you never use a smart card reader."),
         _svc("Spooler", "Print Spooler", "Needed to print.",
              warning="Only disable if you don't use a printer or 'Print to PDF'."),
         _svc("XblAuthManager", "Xbox Live Auth Manager", "Signs in to Xbox Live.",
@@ -77,7 +91,75 @@ def build_service_tweaks() -> list[Tweak]:
         _svc("WSearch", "Windows Search indexing",
              "Constantly indexes your files to make searching faster. Uses noticeable disk and CPU on slower PCs.",
              warning="Searching in Start and File Explorer gets slower."),
+        _svc("bthserv", "Bluetooth Support", "Discovers and connects Bluetooth devices.",
+             warning="Bluetooth headphones, controllers, mice and keyboards will stop working."),
+        _svc("TermService", "Remote Desktop", "Lets other PCs connect to this one with Remote Desktop.",
+             warning="You won't be able to Remote Desktop into this PC."),
+        _svc("PcaSvc", "Program Compatibility Assistant", "Watches for old programs with known problems.",
+             warning="Old programs won't get automatic compatibility fixes."),
         _svc("SysMain", "SysMain (Superfetch)",
              "Preloads frequently used apps into RAM. Can cause constant disk usage on hard drives.",
              warning="On an SSD it makes little difference. On an HDD with enough RAM it can help, so test both."),
     ]
+
+
+# Stopping any of these would crash Windows, break networking/security or log you off.
+PROTECTED = {s.lower() for s in (
+    "RpcSs", "RpcEptMapper", "DcomLaunch", "LSM", "SamSs", "Winmgmt", "EventLog", "PlugPlay", "Power", "ProfSvc",
+    "Schedule", "gpsvc", "CryptSvc", "Dhcp", "Dnscache", "nsi", "NlaSvc", "netprofm", "BFE", "mpssvc", "WinDefend",
+    "WdNisSvc", "SecurityHealthService", "wscsvc", "SENS", "UserManager", "CoreMessagingRegistrar", "BrokerInfrastructure",
+    "SystemEventsBroker", "TimeBrokerSvc", "StateRepository", "AudioSrv", "AudioEndpointBuilder", "Themes",
+    "ShellHWDetection", "FontCache", "EventSystem", "LanmanWorkstation", "KeyIso", "VaultSvc", "Appinfo",
+    "camsvc", "TokenBroker", "WlanSvc", "Wcmsvc", "WinHttpAutoProxySvc", "DispBrokerDesktopSvc", "TrustedInstaller",
+    "msiserver", "sppsvc", "DeviceInstall", "DsmSvc", "iphlpsvc", "LanmanServer", "WpnService", "CDPSvc",
+    "TextInputManagementService", "UdkUserSvc", "cbdhsvc", "webthreatdefsvc", "mpsdrv", "Sense",
+)}
+
+LIST_RUNNING = r"""
+Get-Service | Where-Object Status -eq 'Running' | Sort-Object DisplayName | ForEach-Object {
+    [pscustomobject]@{ Name = $_.Name; DisplayName = $_.DisplayName; StartType = [string]$_.StartType
+                       CanStop = [bool]$_.CanStop }
+}
+"""
+
+
+@dataclass
+class RunningService:
+    name: str
+    display_name: str
+    start_type: str
+    can_stop: bool
+
+    @property
+    def protected(self) -> bool:
+        base = self.name.split("_")[0].lower()  # per-user services look like 'cbdhsvc_1a2b3'
+        return not self.can_stop or self.name.lower() in PROTECTED or base in PROTECTED
+
+
+def parse_running(data) -> list[RunningService]:
+    from .platform_utils import as_list
+
+    return [RunningService(d.get("Name") or "", d.get("DisplayName") or "", d.get("StartType") or "",
+                           bool(d.get("CanStop"))) for d in as_list(data) if isinstance(d, dict) and d.get("Name")]
+
+
+def running_services() -> list[RunningService]:
+    from .platform_utils import powershell_json
+
+    return parse_running(powershell_json(LIST_RUNNING, timeout=60))
+
+
+_NAME_RE = re.compile(r"^[\w.\-]{1,256}$")
+
+
+def set_running(name: str, run: bool) -> tuple[bool, str]:
+    """Stop (or start) a service right now. Its startup type is not changed."""
+    from .platform_utils import powershell
+
+    if not _NAME_RE.match(name):
+        return False, "Invalid service name"
+    if not run and (name.lower() in PROTECTED or name.split("_")[0].lower() in PROTECTED):
+        return False, f"{name} is needed by Windows and can't be stopped here"
+    verb = "Start-Service" if run else "Stop-Service -Force"
+    res = powershell(f"{verb} -Name '{name}' -ErrorAction Stop", timeout=90)
+    return res.returncode == 0, (res.stderr or res.stdout).strip()

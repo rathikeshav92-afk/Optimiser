@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -762,7 +763,7 @@ class CommandsPage(Page):
                     tk.Frame(card.body, bg=T.BORDER, height=1).pack(fill="x", pady=8)
                 row = tk.Frame(card.body, bg=T.CARD)
                 row.pack(fill="x")
-                btn = Button(row, "Run", lambda c=c: self.run(c.command, c.title, c.needs_restart), small=True)
+                btn = Button(row, "Run", lambda c=c: self.run_preset(c), small=True)
                 btn.pack(side="right", padx=(12, 0))
                 self.buttons.append(btn)
                 txt = tk.Frame(row, bg=T.CARD)
@@ -776,8 +777,17 @@ class CommandsPage(Page):
                     tk.Label(head, text=" RESTART ", bg=T.CARD_HI, fg=T.WARN, font=(T.FAMILY, 8, "bold")).pack(side="left")
                 tk.Label(txt, text=c.description, bg=T.CARD, fg=T.MUTED, font=T.F_SMALL, justify="left",
                          wraplength=700).pack(anchor="w")
-                tk.Label(txt, text=c.command, bg=T.CARD, fg=T.ACCENT, font=T.F_MONO, justify="left",
-                         wraplength=700).pack(anchor="w", pady=(2, 0))
+                if c.warning:
+                    tk.Label(txt, text="\u26A0 " + c.warning, bg=T.CARD, fg=T.WARN, font=T.F_SMALL, justify="left",
+                             wraplength=700).pack(anchor="w")
+                lines = c.shown.splitlines()
+                shown = c.shown if len(lines) == 1 else f"PowerShell script, {len(lines)} lines - click to view"
+                code = tk.Label(txt, text=shown, bg=T.CARD, fg=T.ACCENT, font=T.F_MONO, justify="left",
+                                wraplength=700)
+                code.pack(anchor="w", pady=(2, 0))
+                if shown != c.shown:
+                    code.configure(cursor="hand2")
+                    code.bind("<Button-1>", lambda _e, lbl=code, full=c.shown: lbl.configure(text=full))
 
         custom = self.card("Run your own command", "Runs in cmd.exe with administrator rights. Only run commands "
                                                    "you trust.")
@@ -790,6 +800,11 @@ class CommandsPage(Page):
         btn.pack(side="left")
         self.buttons.append(btn)
         self.log = self.log_card("Output", height=14)
+
+    def run_preset(self, c):
+        if c.warning and not self.confirm(c.title, c.warning + "\n\nContinue?"):
+            return
+        self.run(c.command, c.title, c.needs_restart)
 
     def run_custom(self):
         cmd = self.entry.get().strip()
@@ -1013,10 +1028,64 @@ class ServicesPage(Page):
                               "ticking anything marked OPTIONAL.", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).pack(anchor="w", pady=(0, 12))
         self.list = TweakList(self, c.body, self.backend.tweaks.in_category("services"),
                               applied_text="✔ Disabled", not_applied_text="Enabled")
+
+        run = self.card("Running services", "Every service running right now. Stopping one frees its RAM until "
+                                            "the next restart (or until Windows needs it again). Services Windows "
+                                            "can't live without are marked PROTECTED and can't be stopped here.")
+        self.svc_tree = ttk.Treeview(run.body, columns=("name", "display", "start", "state"), show="headings",
+                                     height=12, selectmode="extended")
+        for col, title, w in (("display", "Service", 360), ("name", "Name", 180), ("start", "Starts", 110),
+                              ("state", "", 110)):
+            self.svc_tree.heading(col, text=title)
+            self.svc_tree.column(col, width=w, anchor="w")
+        self.svc_tree.tag_configure("protected", foreground=T.MUTED)
+        self.svc_tree.pack(fill="x")
+        row = tk.Frame(run.body, bg=T.CARD)
+        row.pack(fill="x", pady=(10, 0))
+        Button(row, "Stop selected", lambda: self.set_running(False), color=T.BAD, small=True).pack(side="left")
+        Button(row, "Start selected", lambda: self.set_running(True), color=T.CARD_HI, small=True).pack(side="left",
+                                                                                                     padx=8)
+        Button(row, "Refresh", self.load_running, color=T.CARD_HI, small=True).pack(side="left")
+        self._running = {}
         self.log = self.log_card()
 
     def on_show(self):
         self.list.refresh()
+        self.load_running()
+
+    def load_running(self):
+        def done(svcs):
+            self._running = {s.name: s for s in svcs}
+            self.svc_tree.delete(*self.svc_tree.get_children())
+            for s in sorted(svcs, key=lambda s: (s.protected, s.display_name.lower())):
+                self.svc_tree.insert("", "end", iid=s.name, tags=("protected",) if s.protected else (),
+                                     values=(s.name, s.display_name, s.start_type,
+                                             "PROTECTED" if s.protected else "Running"))
+
+        self.app.bg(self.backend.running_services, done, label="Listing services")
+
+    def set_running(self, run):
+        names = list(self.svc_tree.selection())
+        if not names:
+            return
+        if not run:
+            blocked = [n for n in names if self._running.get(n) and self._running[n].protected]
+            names = [n for n in names if n not in blocked]
+            for n in blocked:
+                self.log.write(f"[FAILED] {n} is protected - Windows needs it")
+            if not names or not self.confirm("Stop services", "Stop these services until the next restart?\n\n"
+                                             + "\n".join(self._running[n].display_name for n in names
+                                                         if n in self._running)
+                                             + "\n\nTo keep one off for good, disable it in the list above."):
+                return
+        log = self.app.logger(self.log)
+
+        def work():
+            for n in names:
+                ok, msg = self.backend.set_service_running(n, run)
+                log(f"[OK] {'Started' if run else 'Stopped'} {n}" if ok else f"[FAILED] {n}: {msg}")
+
+        self.app.bg(work, lambda _: self.load_running(), label="Updating services")
 
     def recommended(self):
         for t in self.list.tweaks:
@@ -1943,3 +2012,240 @@ class DriversPage(Page):
         self.app.bg(lambda: self.backend.backup_drivers(log), done,
                     error=lambda e: (self.backup_btn.set_enabled(True), self.log.write(f"[FAILED] {e}")),
                     label="Backing up drivers")
+
+
+# =============================================================================== Registry editor
+
+
+class ValueDialog(tk.Toplevel):
+    """Create or edit one registry value."""
+
+    def __init__(self, parent, name="", kind="SZ", text="", new=True):
+        from ..registry import KINDS
+
+        super().__init__(parent)
+        self.result = None
+        self.title("New value" if new else "Edit value")
+        self.configure(bg=T.CARD)
+        self.transient(parent)
+        body = tk.Frame(self, bg=T.CARD, padx=20, pady=16)
+        body.pack(fill="both", expand=True)
+        tk.Label(body, text="Name", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).grid(row=0, column=0, sticky="w")
+        self.name = tk.Entry(body, bg="#0b0d12", fg=T.TEXT, insertbackground=T.TEXT, relief="flat", font=T.F_MONO,
+                             width=52)
+        self.name.insert(0, name)
+        if not new:
+            self.name.configure(state="readonly", readonlybackground="#0b0d12")
+        self.name.grid(row=1, column=0, columnspan=2, sticky="ew", ipady=5, pady=(2, 10))
+        tk.Label(body, text="Type", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).grid(row=2, column=0, sticky="w")
+        self.kind = ttk.Combobox(body, values=KINDS, state="readonly", width=14)
+        self.kind.set(kind if kind in KINDS else "SZ")
+        self.kind.grid(row=3, column=0, sticky="w", pady=(2, 10))
+        self.hint = tk.Label(body, text="", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL)
+        self.hint.grid(row=3, column=1, sticky="w", padx=10)
+        tk.Label(body, text="Data", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).grid(row=4, column=0, sticky="w")
+        self.data = tk.Text(body, height=5, width=52, bg="#0b0d12", fg=T.TEXT, insertbackground=T.TEXT,
+                            relief="flat", font=T.F_MONO, wrap="word")
+        self.data.insert("1.0", text)
+        self.data.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(2, 0))
+        self.err = tk.Label(body, text="", bg=T.CARD, fg=T.BAD, font=T.F_SMALL)
+        self.err.grid(row=6, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        row = tk.Frame(body, bg=T.CARD)
+        row.grid(row=7, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        Button(row, "Save", self._save).pack(side="right")
+        Button(row, "Cancel", self.destroy, color=T.CARD_HI).pack(side="right", padx=8)
+        self.kind.bind("<<ComboboxSelected>>", lambda _: self._hint())
+        self._hint()
+        self.bind("<Escape>", lambda _: self.destroy())
+        self.grab_set()
+        (self.name if new else self.data).focus_set()
+
+    def _hint(self):
+        self.hint.configure(text={"DWORD": "number, e.g. 1 or 0x10", "QWORD": "number, e.g. 1 or 0x10",
+                                  "BINARY": "hex bytes, e.g. 90 12 03 80", "MULTI_SZ": "one string per line",
+                                  "EXPAND_SZ": "text, %VARIABLES% allowed"}.get(self.kind.get(), "text"))
+
+    def _save(self):
+        from ..regedit import parse_value
+
+        kind, text = self.kind.get(), self.data.get("1.0", "end").rstrip("\n")
+        try:
+            parse_value(kind, text)
+        except ValueError as exc:
+            self.err.configure(text=str(exc))
+            return
+        self.result = (self.name.get(), kind, text)
+        self.grab_release()
+        self.destroy()
+
+
+class RegistryPage(Page):
+    def build(self):
+        from ..regedit import FAVORITES
+        from ..registry import HIVES
+
+        self.header("Registry", "View and change Windows registry settings. Every change is backed up first and "
+                                "can be undone in Backup & Restore.", T.WARN)
+        nav = self.card()
+        row = tk.Frame(nav.body, bg=T.CARD)
+        row.pack(fill="x")
+        Button(row, "↑", self.up, color=T.CARD_HI, small=True).pack(side="left", padx=(0, 6))
+        self.hive = ttk.Combobox(row, values=HIVES, state="readonly", width=6)
+        self.hive.set("HKCU")
+        self.hive.pack(side="left")
+        self.key = tk.Entry(row, bg="#0b0d12", fg=T.TEXT, insertbackground=T.TEXT, relief="flat", font=T.F_MONO)
+        self.key.pack(side="left", fill="x", expand=True, ipady=6, padx=8)
+        self.key.bind("<Return>", lambda _: self.go())
+        Button(row, "Go", self.go, small=True).pack(side="left")
+        fav = tk.Frame(nav.body, bg=T.CARD)
+        fav.pack(fill="x", pady=(10, 0))
+        tk.Label(fav, text="Jump to:", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).pack(side="left", padx=(0, 6))
+        for i, (label, hive, key) in enumerate(FAVORITES):
+            if i == 4:
+                fav = tk.Frame(nav.body, bg=T.CARD)
+                fav.pack(fill="x", pady=(6, 0))
+                tk.Label(fav, text="", bg=T.CARD, width=8).pack(side="left")
+            Button(fav, label, lambda h=hive, k=key: self.open(h, k), color=T.CARD_HI, small=True).pack(
+                side="left", padx=(0, 6))
+        self.danger = tk.Label(nav.body, text="", bg=T.CARD, fg=T.BAD, font=(T.FAMILY, 9, "bold"), wraplength=840,
+                               justify="left")
+        self.danger.pack(anchor="w", pady=(8, 0))
+
+        panes = tk.Frame(self.body, bg=T.BG)
+        panes.pack(fill="x", pady=(0, 16))
+        panes.columnconfigure(0, weight=1, uniform="p")
+        panes.columnconfigure(1, weight=2, uniform="p")
+        left = Card(panes, "Subkeys", "Double-click to open")
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
+        self.subkeys = ttk.Treeview(left.body, columns=("k",), show="", height=14, selectmode="browse")
+        self.subkeys.column("k", anchor="w")
+        self.subkeys.pack(fill="both", expand=True)
+        self.subkeys.bind("<Double-1>", lambda _: self._enter_subkey())
+        self.subkeys.bind("<Return>", lambda _: self._enter_subkey())
+        right = Card(panes, "Values", "Double-click a value to edit it")
+        right.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
+        self.values = ttk.Treeview(right.body, columns=("name", "type", "data"), show="headings", height=12)
+        for col, title, w in (("name", "Name", 180), ("type", "Type", 90), ("data", "Data", 300)):
+            self.values.heading(col, text=title)
+            self.values.column(col, width=w, anchor="w")
+        self.values.pack(fill="both", expand=True)
+        self.values.bind("<Double-1>", lambda _: self.edit())
+        btns = tk.Frame(right.body, bg=T.CARD)
+        btns.pack(fill="x", pady=(10, 0))
+        Button(btns, "New value", self.new, small=True).pack(side="left")
+        Button(btns, "Edit", self.edit, color=T.CARD_HI, small=True).pack(side="left", padx=6)
+        Button(btns, "Delete", self.delete, color=T.BAD, small=True).pack(side="left")
+        Button(btns, "Open in Registry Editor", lambda: self.backend.open_in_regedit(*self._here()),
+               color=T.CARD_HI, small=True).pack(side="right")
+        self.log = self.log_card(height=6)
+        self._vals = {}
+        self.open("HKCU", r"Control Panel\Desktop")
+
+    # ------------------------------------------------------------------ navigation
+    def _here(self):
+        return self.hive.get(), self.key.get().strip().strip("\\")
+
+    def open(self, hive, key):
+        from ..regedit import is_dangerous
+
+        self.hive.set(hive)
+        self.key.delete(0, "end")
+        self.key.insert(0, key)
+        self.danger.configure(text="⚠ Careful: wrong values here can stop Windows from starting. Change things "
+                                   "only if you know exactly what they do." if is_dangerous(key) else "")
+        reg = self.backend.registry
+
+        def done(res):
+            subkeys, values = res
+            self.subkeys.delete(*self.subkeys.get_children())
+            for sk in subkeys:
+                self.subkeys.insert("", "end", iid=sk, values=("\u25B8 " + sk,))
+            self._render_values(values)
+
+        self.app.bg(lambda: (reg.subkeys(hive, key), reg.values(hive, key)), done, label="Reading registry")
+
+    def _render_values(self, values):
+        from ..regedit import format_value
+
+        self._vals = values
+        self.values.delete(*self.values.get_children())
+        for name in sorted(values, key=str.lower):
+            value, kind = values[name]
+            self.values.insert("", "end", iid="v:" + name, values=(name or "(Default)", kind,
+                                                                   format_value(value, kind)))
+
+    def go(self):
+        from ..regedit import parse_path
+
+        text = self.key.get().strip()
+        try:
+            hive, key = parse_path(text) if re.match(r"^(computer\\)?hk", text, re.I) else (self.hive.get(), text)
+        except ValueError as exc:
+            self.log.write(f"[FAILED] {exc}")
+            return
+        self.open(hive, key.strip("\\"))
+
+    def up(self):
+        hive, key = self._here()
+        self.open(hive, key.rsplit("\\", 1)[0] if "\\" in key else "")
+
+    def _enter_subkey(self):
+        sel = self.subkeys.selection()
+        if sel:
+            hive, key = self._here()
+            self.open(hive, f"{key}\\{sel[0]}" if key else sel[0])
+
+    # ------------------------------------------------------------------ editing
+    def _selected(self):
+        sel = self.values.selection()
+        return sel[0][2:] if sel else None
+
+    def _apply(self, action, *args, summary):
+        from ..regedit import is_dangerous
+
+        hive, key = self._here()
+        warn = "\n\n⚠ This key is critical to Windows. A wrong value can stop your PC from starting." \
+            if is_dangerous(key) else ""
+        if not self.confirm("Change registry", f"{summary}\n\nIn: {hive}\\{key}\n\nThe old value is backed up and "
+                                               f"can be undone in Backup & Restore.{warn}"):
+            return
+        ed = self.backend.regedit
+        fn = ed.set_value if action == "set" else ed.delete_value
+
+        def done(_):
+            self.log.write(f"[OK] {summary} (undo it in Backup & Restore)")
+            self.open(hive, key)
+
+        self.app.bg(lambda: fn(hive, key, *args), done, error=lambda e: self.log.write(f"[FAILED] {e}"),
+                    label="Changing registry")
+
+    def new(self):
+        dlg = ValueDialog(self.winfo_toplevel())
+        self.wait_window(dlg)
+        if dlg.result:
+            name, kind, text = dlg.result
+            if name in self._vals and not self.confirm("Replace value", f"'{name}' already exists. Replace it?"):
+                return
+            self._apply("set", name, kind, text, summary=f"Set {name or '(Default)'} ({kind})")
+
+    def edit(self):
+        from ..regedit import edit_text
+        from ..registry import KINDS
+
+        name = self._selected()
+        if name is None:
+            return
+        value, kind = self._vals[name]
+        if kind not in KINDS:
+            self.log.write("[FAILED] This value has a special type. Use 'Open in Registry Editor' to change it.")
+            return
+        dlg = ValueDialog(self.winfo_toplevel(), name, kind, edit_text(value, kind), new=False)
+        self.wait_window(dlg)
+        if dlg.result:
+            _, new_kind, text = dlg.result
+            self._apply("set", name, new_kind, text, summary=f"Change {name or '(Default)'} to {text[:60]!r}")
+
+    def delete(self):
+        name = self._selected()
+        if name is not None:
+            self._apply("delete", name, summary=f"Delete {name or '(Default)'}")

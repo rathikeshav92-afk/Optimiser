@@ -55,3 +55,11 @@ def setup(root: tk.Tk) -> None:
     style.configure("Treeview.Heading", background=CARD_HI, foreground=MUTED, font=F_SMALL, relief="flat")
     style.map("Treeview", background=[("selected", ACCENT)], foreground=[("selected", "#ffffff")])
     style.map("Treeview.Heading", background=[("active", BORDER)])
+    style.configure("TCombobox", fieldbackground=CARD_HI, background=CARD_HI, foreground=TEXT, arrowcolor=TEXT,
+                    bordercolor=BORDER, lightcolor=CARD_HI, darkcolor=CARD_HI, selectbackground=CARD_HI,
+                    selectforeground=TEXT)
+    style.map("TCombobox", fieldbackground=[("readonly", CARD_HI)], foreground=[("readonly", TEXT)],
+              selectbackground=[("readonly", CARD_HI)], selectforeground=[("readonly", TEXT)])
+    root.option_add("*TCombobox*Listbox.background", CARD_HI)
+    root.option_add("*TCombobox*Listbox.foreground", TEXT)
+    root.option_add("*TCombobox*Listbox.selectBackground", ACCENT)

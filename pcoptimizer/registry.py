@@ -9,7 +9,9 @@ try:
 except ImportError:  # not on Windows
     winreg = None
 
-KINDS = ("DWORD", "QWORD", "SZ", "EXPAND_SZ", "BINARY")
+KINDS = ("DWORD", "QWORD", "SZ", "EXPAND_SZ", "MULTI_SZ", "BINARY")
+HIVES = ("HKCU", "HKLM", "HKCR", "HKU")
+OTHER = "OTHER"  # a value type we can show but not edit (REG_NONE, REG_LINK, ...)
 MISSING = object()
 
 
@@ -18,18 +20,21 @@ class Registry(Protocol):
     def set(self, hive: str, key: str, name: str, value: Any, kind: str) -> None: ...
     def delete(self, hive: str, key: str, name: str) -> None: ...
     def values(self, hive: str, key: str) -> dict[str, tuple[Any, str]]: ...
+    def subkeys(self, hive: str, key: str) -> list[str]: ...
 
 
 class WinRegistry:
     def __init__(self):
         if winreg is None:
             raise RuntimeError("The Windows registry is only available on Windows")
-        self._hives = {"HKCU": winreg.HKEY_CURRENT_USER, "HKLM": winreg.HKEY_LOCAL_MACHINE}
+        self._hives = {"HKCU": winreg.HKEY_CURRENT_USER, "HKLM": winreg.HKEY_LOCAL_MACHINE,
+                       "HKCR": winreg.HKEY_CLASSES_ROOT, "HKU": winreg.HKEY_USERS}
         self._types = {
             "DWORD": winreg.REG_DWORD,
             "QWORD": winreg.REG_QWORD,
             "SZ": winreg.REG_SZ,
             "EXPAND_SZ": winreg.REG_EXPAND_SZ,
+            "MULTI_SZ": winreg.REG_MULTI_SZ,
             "BINARY": winreg.REG_BINARY,
         }
         self._names = {v: k for k, v in self._types.items()}
@@ -40,7 +45,7 @@ class WinRegistry:
                 value, typ = winreg.QueryValueEx(k, name)
         except OSError:
             return None
-        return value, self._names.get(typ, "SZ")
+        return value, self._names.get(typ, OTHER)
 
     def set(self, hive, key, name, value, kind):
         with winreg.CreateKeyEx(self._hives[hive], key, 0, winreg.KEY_SET_VALUE | winreg.KEY_WOW64_64KEY) as k:
@@ -65,11 +70,26 @@ class WinRegistry:
                         name, value, typ = winreg.EnumValue(k, i)
                     except OSError:
                         break
-                    out[name] = (value, self._names.get(typ, "SZ"))
+                    out[name] = (value, self._names.get(typ, OTHER))
                     i += 1
         except OSError:
             pass
         return out
+
+    def subkeys(self, hive, key):
+        out = []
+        try:
+            with winreg.OpenKey(self._hives[hive], key, 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY) as k:
+                i = 0
+                while True:
+                    try:
+                        out.append(winreg.EnumKey(k, i))
+                    except OSError:
+                        break
+                    i += 1
+        except OSError:
+            pass
+        return sorted(out, key=str.lower)
 
 
 class FakeRegistry:
@@ -94,6 +114,14 @@ class FakeRegistry:
 
     def values(self, hive, key):
         return dict(self.data.get(self._k(hive, key), {}))
+
+    def subkeys(self, hive, key):
+        prefix = (key.lower().rstrip("\\") + "\\") if key else ""
+        names = set()
+        for h, k in self.data:
+            if h == hive and k.startswith(prefix) and k != prefix.rstrip("\\"):
+                names.add(k[len(prefix):].split("\\")[0])
+        return sorted(names)
 
 
 def default_registry() -> Registry:
