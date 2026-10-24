@@ -20,8 +20,15 @@ TEST_DOMAINS = ["www.google.com", "www.youtube.com", "store.steampowered.com", "
 _IP_RE = re.compile(r"^[0-9a-fA-F:.]{2,45}$")
 
 ADAPTERS_SCRIPT = r"""
-Get-NetAdapter -Physical -ErrorAction SilentlyContinue | Where-Object Status -eq 'Up' | ForEach-Object {
-    $dns = (Get-DnsClientServerAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue).ServerAddresses
+# Only adapters with an IPv4 default gateway are really connected. Virtual or unplugged adapters
+# that merely report "Up" have no DNS client entry and can't be changed.
+$connected = @(Get-NetIPConfiguration -ErrorAction SilentlyContinue | Where-Object { $_.IPv4DefaultGateway } |
+               ForEach-Object { $_.InterfaceIndex })
+Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' -and $connected -contains $_.ifIndex } |
+  ForEach-Object {
+    $client = Get-DnsClientServerAddress -InterfaceIndex $_.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue
+    if (-not $client) { return }
+    $dns = $client.ServerAddresses
     $static = (Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces\$($_.InterfaceGuid)" -ErrorAction SilentlyContinue).NameServer
     [pscustomobject]@{ Index = $_.ifIndex; Name = $_.Name; Description = $_.InterfaceDescription; Dns = @($dns)
                        Static = [string]$static }
