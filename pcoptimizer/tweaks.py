@@ -25,6 +25,10 @@ def shell_runner(cmd: str) -> tuple[int, str]:
     return res.returncode, (res.stdout or "") + (res.stderr or "")
 
 
+class Skipped(Exception):
+    """Windows won't allow this change on this PC; not an error in the app."""
+
+
 @dataclass(frozen=True)
 class RegValue:
     hive: str
@@ -516,10 +520,18 @@ class TweakManager:
         tweak = self.by_id[tweak_id]
         with self._lock:
             # Only the *first* snapshot is kept: it is the user's original configuration.
-            if tweak_id not in self._backup:
+            fresh = tweak_id not in self._backup
+            if fresh:
                 self._backup[tweak_id] = tweak.snapshot(self)
                 self._save()
-        tweak.apply(self)
+        try:
+            tweak.apply(self)
+        except Exception:
+            if fresh:  # nothing was changed, so don't list it under Backup & Restore
+                with self._lock:
+                    self._backup.pop(tweak_id, None)
+                    self._save()
+            raise
 
     def revert(self, tweak_id: str) -> bool:
         """Restore the original state. Returns False when there is nothing to restore."""

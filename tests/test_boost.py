@@ -57,3 +57,25 @@ def test_ai_boost_tool(tmp_path):
     a = Assistant(b, client=SimpleNamespace(), approve=lambda *_: True)
     out, err = a.run_tool("run_one_click_boost", {"steps": ["privacy"], "reason": "less tracking"})
     assert not err and "settings changed" in out
+
+
+def test_locked_service_falls_back_to_sc_then_skips(tmp_path):
+    b = make(tmp_path)
+    calls = []
+    real_set = b.registry.set
+
+    def locked_set(hive, key, name, value, kind):
+        if "TrkWks" in key and name == "Start" and value == 4:
+            raise PermissionError(5, "Access is denied")
+        real_set(hive, key, name, value, kind)
+
+    b.registry.set("HKLM", r"SYSTEM\CurrentControlSet\Services\TrkWks", "Start", 2, "DWORD")
+    b.registry.set = locked_set
+    runner = b.tweaks.runner
+    b.tweaks.runner = lambda cmd: (calls.append(cmd), (5, "[SC] OpenService FAILED 5:\nAccess is denied.")
+                                   if cmd.startswith("sc config") else runner(cmd))[1]
+    res = boost.run(b, {"services"}, lambda _m: None)
+    assert "Distributed Link Tracking Client" in res.skipped and not res.failed
+    assert 'sc config "TrkWks" start= disabled' in calls
+    assert not b.tweaks.has_backup("svc_trkwks")  # nothing changed, so nothing to undo
+    assert "skipped" in boost.summary(res)

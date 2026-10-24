@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-from .tweaks import RegValue, Tweak
+from .tweaks import RegValue, Skipped, Tweak
 
 SERVICES_KEY = r"SYSTEM\CurrentControlSet\Services"
 AUTOMATIC, MANUAL, DISABLED = 2, 3, 4
@@ -28,16 +28,32 @@ class ServiceTweak(Tweak):
         cur = ctx.registry.get("HKLM", self.key, "Start")
         return cur is not None and cur[0] == DISABLED
 
+    def _sc_config(self, ctx, start_value: int) -> None:
+        """Fallback for services whose registry key Windows locks even for administrators."""
+        mode = {AUTOMATIC: "auto", MANUAL: "demand", DISABLED: "disabled"}.get(start_value, "demand")
+        code, out = ctx.runner(f'sc config "{self.service}" start= {mode}')
+        if code != 0:
+            if code == 5 or "access is denied" in out.lower():
+                raise Skipped("Windows protects this service's settings")
+            raise RuntimeError(out.strip() or f"sc config failed ({code})")
+
     def apply(self, ctx) -> None:
         # Never create a key for a service that isn't installed.
         if not self.is_available(ctx):
             raise RuntimeError("not installed on this PC")
-        super().apply(ctx)
+        try:
+            super().apply(ctx)
+        except PermissionError:
+            self._sc_config(ctx, DISABLED)
         ctx.runner(f'sc stop "{self.service}"')
 
     def revert(self, ctx, backup) -> None:
-        super().revert(ctx, backup)
         original = next((v[3] for v in backup.get("values", []) if v[2] == "Start"), None)
+        try:
+            super().revert(ctx, backup)
+        except PermissionError:
+            if original is not None:
+                self._sc_config(ctx, original)
         if original == AUTOMATIC:
             ctx.runner(f'sc start "{self.service}"')
 

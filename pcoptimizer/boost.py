@@ -7,6 +7,7 @@ from typing import Callable
 
 from .cleaner import human
 from .commands import COMMANDS
+from .tweaks import Skipped
 
 Log = Callable[[str], None]
 
@@ -41,6 +42,7 @@ class BoostResult:
     applied: list[str] = field(default_factory=list)
     already: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
     freed_bytes: int = 0
     needs_restart: bool = False
 
@@ -60,6 +62,9 @@ def _apply_category(backend, category: str, log: Log, result: BoostResult) -> No
             result.applied.append(t.title)
             result.needs_restart |= t.needs_restart
             log(f"[OK] {t.title}")
+        except Skipped as exc:
+            result.skipped.append(t.title)
+            log(f"[SKIPPED] {t.title}: {exc}")
         except Exception as exc:
             result.failed.append(t.title)
             log(f"[FAILED] {t.title}: {exc}")
@@ -101,6 +106,8 @@ def summary(result: BoostResult) -> str:
         parts.append(f"{len(result.already)} already optimised")
     if result.freed_bytes:
         parts.append(f"{human(result.freed_bytes)} freed")
+    if result.skipped:
+        parts.append(f"{len(result.skipped)} skipped (protected by Windows)")
     if result.failed:
         parts.append(f"{len(result.failed)} failed")
     return ", ".join(parts)

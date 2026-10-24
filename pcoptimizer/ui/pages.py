@@ -2429,8 +2429,12 @@ class HealthPage(Page):
         row.pack(fill="x")
         self.summary = tk.Label(row, text="Not checked yet", bg=T.CARD, fg=T.TEXT, font=T.F_H2)
         self.summary.pack(side="left")
-        self.check_btn = Button(row, "↻  Run health check", self.run_check)
+        self.check_btn = Button(row, "↻  Run health check", self.run_check, color=T.CARD_HI)
         self.check_btn.pack(side="right")
+        self.fix_btn = Button(row, "✔  Fix everything", self.fix_everything, color=T.GOOD)
+        self.fix_btn.pack(side="right", padx=8)
+        self.manual_card = self.card("Steps only you can do")
+        self.manual_card.pack_forget()
         self.list_card = self.card("Results")
         self.log = self.log_card(height=6)
         self._checked = False
@@ -2454,9 +2458,25 @@ class HealthPage(Page):
                     label="Running health check")
 
     def render(self, findings):
+        from ..fixall import manual_steps
         from ..health import score
 
+        self._findings = findings
         self.check_btn.set_enabled(True)
+        steps = manual_steps(findings)
+        for w in self.manual_card.body.winfo_children():
+            w.destroy()
+        if steps:
+            self.manual_card.pack(fill="x", pady=(0, 16), before=self.list_card)
+            for st in steps:
+                tk.Label(self.manual_card.body, text="•  " + st, bg=T.CARD, fg=T.TEXT, wraplength=820,
+                         justify="left").pack(anchor="w", pady=2)
+            bios = next((f for f in findings if f.fix == "bios" and f.status in ("warn", "bad")), None)
+            if bios:
+                Button(self.manual_card.body, "Restart into BIOS", lambda: self.fix(bios), small=True).pack(
+                    anchor="w", pady=(8, 0))
+        else:
+            self.manual_card.pack_forget()
         bad, warn = score(findings)
         if bad or warn:
             parts = [f"{bad} problem{'s' if bad != 1 else ''}" if bad else "",
@@ -2486,6 +2506,34 @@ class HealthPage(Page):
                 Button(row, f.fix_label, lambda f=f: self.fix(f), small=True,
                        color=T.ACCENT if f.status in ("bad", "warn") else T.CARD_HI).pack(side="right", padx=(12, 0))
 
+    def fix_everything(self):
+        from .. import fixall
+
+        dlg = FixAllDialog(self.winfo_toplevel())
+        self.wait_window(dlg)
+        if not dlg.result:
+            return
+        self.fix_btn.set_enabled(False)
+        self.check_btn.set_enabled(False)
+        log = self.app.logger(self.log)
+        self.log.write("> Fix everything started - this can take several minutes")
+
+        def done(res):
+            self.fix_btn.set_enabled(True)
+            self.check_btn.set_enabled(True)
+            self.log.write(f"> Done: {len(res.done)} fixed, {len(res.skipped)} not needed, {len(res.failed)} failed")
+            self.run_check()
+            if res.needs_restart and self.confirm("Restart now?", "Some changes need a restart. Save your work, "
+                                                  "then click Yes to restart in 10 seconds."):
+                self.backend.restart_pc()
+
+        def error(exc):
+            self.fix_btn.set_enabled(True)
+            self.check_btn.set_enabled(True)
+            self.log.write(f"[FAILED] {exc}")
+
+        self.app.bg(lambda: fixall.run(self.backend, dlg.result, log), done, error, label="Fixing everything")
+
     def fix(self, f):
         action = f.fix
         if action.startswith("page:"):
@@ -2512,3 +2560,43 @@ class HealthPage(Page):
             if self.confirm("Restart", "Restart your PC in 10 seconds? Save your work first."):
                 self.backend.restart_pc()
                 self.log.write("> Restarting in 10 seconds (run 'shutdown /a' to cancel)")
+
+
+class FixAllDialog(tk.Toplevel):
+    def __init__(self, parent):
+        from ..fixall import ACTIONS
+
+        super().__init__(parent)
+        self.result = None
+        self.title("Fix everything")
+        self.configure(bg=T.CARD)
+        self.transient(parent)
+        self.resizable(False, False)
+        body = tk.Frame(self, bg=T.CARD, padx=22, pady=18)
+        body.pack(fill="both", expand=True)
+        tk.Label(body, text="✔ Fix everything", bg=T.CARD, fg=T.TEXT, font=T.F_H2).pack(anchor="w")
+        tk.Label(body, text="Applies every safe recommendation. Untick anything you want to skip.", bg=T.CARD,
+                 fg=T.MUTED, font=T.F_SMALL).pack(anchor="w", pady=(2, 12))
+        self.vars = {}
+        for key, title, desc in ACTIONS:
+            self.vars[key] = tk.BooleanVar(value=True)
+            ToggleRow(body, title, desc, self.vars[key]).pack(fill="x", pady=4)
+        tk.Label(body, text="Not included: BIOS settings (you do those yourself - see 'Steps only you can do') and "
+                            "the optional security trade-offs (Memory Integrity, Defender exclusions).",
+                 bg=T.CARD, fg=T.MUTED, font=T.F_SMALL, wraplength=520, justify="left").pack(anchor="w", pady=(10, 0))
+        row = tk.Frame(body, bg=T.CARD)
+        row.pack(fill="x", pady=(14, 0))
+        Button(row, "Fix now", self._ok, color=T.GOOD).pack(side="right")
+        Button(row, "Cancel", self.destroy, color=T.CARD_HI).pack(side="right", padx=8)
+        self.bind("<Escape>", lambda _: self.destroy())
+        self.update_idletasks()
+        x = parent.winfo_rootx() + (parent.winfo_width() - self.winfo_width()) // 2
+        y = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 3
+        self.geometry(f"+{max(0, x)}+{max(0, y)}")
+        self.grab_set()
+
+    def _ok(self):
+        chosen = {k for k, v in self.vars.items() if v.get()}
+        self.result = chosen or None
+        self.grab_release()
+        self.destroy()
