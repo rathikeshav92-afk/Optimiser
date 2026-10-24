@@ -3,8 +3,11 @@
 import sys
 import time
 import traceback
+from pathlib import Path
 
-from pcoptimizer import screentime as st
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # run from ci/: make the package importable
+
+from pcoptimizer import screentime as st  # noqa: E402
 
 failures = []
 
