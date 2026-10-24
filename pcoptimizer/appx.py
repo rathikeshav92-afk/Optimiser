@@ -79,6 +79,15 @@ KNOWN: dict[str, tuple[str, str]] = {
     "Microsoft.RawImageExtension": ("RAW image support", "protected"),
     "Microsoft.AV1VideoExtension": ("AV1 video support", "protected"),
     "Microsoft.MPEG2VideoExtension": ("MPEG-2 video support", "protected"),
+    "Microsoft.MicrosoftEdge": ("Microsoft Edge", "protected"),
+    "Microsoft.MicrosoftEdge.Stable": ("Microsoft Edge", "protected"),
+    "Microsoft.MicrosoftEdgeDevToolsClient": ("Edge DevTools", "protected"),
+    "Microsoft.WindowsAppRuntime": ("Windows App Runtime", "protected"),
+    "Microsoft.Winget.Source": ("winget package source", "protected"),
+    "Microsoft.LanguageExperiencePack": ("Windows display language", "protected"),
+    "MicrosoftWindows.CrossDevice": ("Cross-device experience", "protected"),
+    "MicrosoftCorporationII.WindowsSubsystemForLinux": ("Windows Subsystem for Linux", "optional"),
+    "Microsoft.Windows.Ai.Copilot.Provider": ("Copilot provider", "protected"),
     "NVIDIACorp.NVIDIAControlPanel": ("NVIDIA Control Panel", "protected"),
     "AdvancedMicroDevicesInc-2.AMDRadeonSoftware": ("AMD Radeon Software", "protected"),
     "AppUp.IntelGraphicsExperience": ("Intel Graphics Command Center", "protected"),
@@ -120,6 +129,8 @@ class App:
 
 
 def classify(name: str) -> tuple[str, str]:
+    if name.lower().startswith("microsoft.languageexperiencepack"):  # e.g. ...LanguageExperiencePacken-GB
+        return "Windows display language", "protected"
     for prefix, (friendly, group) in KNOWN.items():
         if name.lower() == prefix.lower() or name.lower().startswith(prefix.lower() + "."):
             return friendly, group

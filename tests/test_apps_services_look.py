@@ -116,3 +116,9 @@ def test_ai_tools_for_services_and_apps(b):
     assert err and "Protected" in out
     out, err = a.run_tool("remove_builtin_apps", {"names": ["Microsoft.GetHelp"], "reason": "unused"})
     assert not err and "Removed Get Help" in out
+
+
+@pytest.mark.parametrize("name", ["Microsoft.MicrosoftEdge.Stable", "Microsoft.LanguageExperiencePacken-GB",
+                                  "Microsoft.WindowsAppRuntime.1.5", "Microsoft.DesktopAppInstaller"])
+def test_system_packages_are_protected(name):
+    assert appx.classify(name)[1] == "protected"
