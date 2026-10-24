@@ -12,6 +12,7 @@ from .. import APP_NAME, __version__
 from ..backend import Backend
 from . import pages
 from . import theme as T
+from .widgets import ScrollFrame
 
 NAV = [
     ("dashboard", "Dashboard", "⌂", pages.DashboardPage),
@@ -22,6 +23,8 @@ NAV = [
     ("games", "Game Profiles", "✦", pages.GamesPage),
     ("balanced", "Balanced Mode", "◐", pages.BalancedPage),
     ("tweaks", "Speed Up PC", "⚙", pages.TweaksPage),
+    ("apps", "Built-in Apps", "▦", pages.AppsPage),
+    ("lookfeel", "Look & Feel", "◑", pages.LookFeelPage),
     ("services", "Services", "☰", pages.ServicesPage),
     ("drivers", "Driver Updates", "⇪", pages.DriversPage),
     ("registry", "Registry", "▤", pages.RegistryPage),
@@ -70,19 +73,22 @@ class App(tk.Tk):
         tk.Label(logo, text="⚡", bg=T.SIDEBAR, fg=T.ACCENT, font=(T.FAMILY, 22)).pack(side="left")
         tk.Label(logo, text="PC Optimizer", bg=T.SIDEBAR, fg=T.TEXT, font=(T.FAMILY, 14, "bold")).pack(side="left", padx=6)
         self._nav_items: dict[str, tuple[tk.Frame, list[tk.Widget]]] = {}
+        foot = tk.Frame(bar, bg=T.SIDEBAR)
+        foot.pack(side="bottom", fill="x", padx=18, pady=(8, 14))
+        # The page list scrolls when the window is too short to show every page.
+        nav = ScrollFrame(bar, bg=T.SIDEBAR, scrollbar=False)
+        nav.pack(fill="both", expand=True)
         for key, label, icon, _ in NAV:
-            row = tk.Frame(bar, bg=T.SIDEBAR, cursor="hand2")
-            row.pack(fill="x", padx=10, pady=2)
+            row = tk.Frame(nav.inner, bg=T.SIDEBAR, cursor="hand2")
+            row.pack(fill="x", padx=10, pady=1)
             ic = tk.Label(row, text=icon, bg=T.SIDEBAR, fg=T.MUTED, font=(T.FAMILY, 12), width=2)
-            ic.pack(side="left", padx=(8, 4), pady=7)
+            ic.pack(side="left", padx=(8, 4), pady=6)
             tx = tk.Label(row, text=label, bg=T.SIDEBAR, fg=T.MUTED, font=(T.FAMILY, 10, "bold"))
             tx.pack(side="left")
             for w in (row, ic, tx):
                 w.bind("<Button-1>", lambda _, k=key: self.show(k))
             self._nav_items[key] = (row, [row, ic, tx])
 
-        foot = tk.Frame(bar, bg=T.SIDEBAR)
-        foot.pack(side="bottom", fill="x", padx=18, pady=16)
         admin = self.backend.is_admin()
         tk.Label(foot, text="● Administrator" if admin else "● Limited (not admin)", bg=T.SIDEBAR,
                  fg=T.GOOD if admin else T.WARN, font=T.F_SMALL).pack(anchor="w")

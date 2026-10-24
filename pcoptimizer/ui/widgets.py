@@ -89,7 +89,7 @@ class Bar(tk.Canvas):
 class ScrollFrame(tk.Frame):
     """A vertically scrolling container; put children in ``.inner``."""
 
-    def __init__(self, parent, bg=T.BG, **kw):
+    def __init__(self, parent, bg=T.BG, scrollbar=True, **kw):
         super().__init__(parent, bg=bg, **kw)
         self.canvas = tk.Canvas(self, bg=bg, highlightthickness=0)
         self.scroll = ttk.Scrollbar(self, orient="vertical", command=self.canvas.yview)
@@ -97,7 +97,8 @@ class ScrollFrame(tk.Frame):
         self._win = self.canvas.create_window((0, 0), window=self.inner, anchor="nw")
         self.canvas.configure(yscrollcommand=self.scroll.set)
         self.canvas.pack(side="left", fill="both", expand=True)
-        self.scroll.pack(side="right", fill="y")
+        if scrollbar:
+            self.scroll.pack(side="right", fill="y")
         self.inner.bind("<Configure>", lambda _: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
         self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(self._win, width=e.width))
         self.bind_all("<MouseWheel>", self._wheel, add="+")

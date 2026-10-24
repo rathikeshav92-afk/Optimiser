@@ -96,12 +96,63 @@ def defender():
     return "exclusion added and removed"
 
 
+def services_manager():
+    from pcoptimizer import servicemgr
+
+    b = Backend()
+    svcs = servicemgr.list_all()
+    assert len(svcs) > 50 and any(s.protected for s in svcs), len(svcs)
+    sm = servicemgr.ServiceManager(TweakManager(b.registry, b.tweaks.runner,
+                                                backup_path=Path(tempfile.mkdtemp()) / "b.json"),
+                                   path=Path(tempfile.mkdtemp()) / "s.json")
+    spooler = next(s for s in svcs if s.name == "Spooler")
+    before = spooler.mode
+    sm.set_start(spooler, "demand")
+    now = servicemgr.parse_sc_qc(b.tweaks.runner('sc qc "Spooler"')[1])
+    assert now == "demand", now
+    sm.undo("Spooler")
+    after = servicemgr.parse_sc_qc(b.tweaks.runner('sc qc "Spooler"')[1])
+    assert after == before, (before, after)
+    return f"{len(svcs)} services, {sum(s.protected for s in svcs)} protected; Spooler {before}->demand->{after}"
+
+
+def builtin_apps():
+    from pcoptimizer import appx
+
+    apps = appx.list_apps()
+    groups = {g: sum(a.group == g for a in apps) for g in ("bloat", "optional", "other", "protected")}
+    return f"{len(apps)} apps {groups}: " + ", ".join(a.friendly for a in apps[:8])
+
+
+def look_and_feel():
+    from pcoptimizer.tweaks import CLASSIC_MENU
+
+    b = Backend()
+    mgr = TweakManager(b.registry, b.tweaks.runner, backup_path=Path(tempfile.mkdtemp()) / "b.json")
+    existed = b.registry.key_exists("HKCU", CLASSIC_MENU)
+    ids = [t.id for t in mgr.in_category("appearance")]
+    failed = []
+    for i in ids:
+        try:
+            mgr.apply(i)
+        except Exception as exc:
+            failed.append(f"{i}: {exc}")
+    assert b.registry.key_exists("HKCU", CLASSIC_MENU)
+    assert mgr.is_applied("classic_context_menu") and mgr.is_applied("show_extensions")
+    mgr.revert_all()
+    assert b.registry.key_exists("HKCU", CLASSIC_MENU) == existed
+    return f"{len(ids) - len(failed)}/{len(ids)} applied and undone" + (f"; blocked by Windows: {failed}" if failed else "")
+
+
 check("monitors", monitors)
 check("running processes", processes)
 check("memory integrity", lambda: health.hvci_running())
 check("health check", health_check)
 check("auto gaming mode", auto_gaming)
 check("defender exclusion", defender)
+check("services manager", services_manager)
+check("built-in apps", builtin_apps)
+check("look & feel", look_and_feel)
 check("fast dns", dns)
 print("FAILURES:", failures or "none")
 sys.exit(1 if failures else 0)

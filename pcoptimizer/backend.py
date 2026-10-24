@@ -10,6 +10,7 @@ from typing import Callable
 from . import benchmark, cleaner, drivers, games, processes, screentime, sensors, system_info
 from .ai_assistant import AIChangeLog
 from .regedit import RegistryEditor
+from .servicemgr import ServiceManager
 from .platform_utils import is_admin, stream
 from .registry import FakeRegistry, default_registry
 from .tweaks import GUID_RE, TweakManager, shell_runner
@@ -28,6 +29,7 @@ class Backend:
         self.games = games.GameLibrary(self.tweaks)
         self.ai_changes = AIChangeLog(self.tweaks)
         self.regedit = RegistryEditor(self.tweaks, export=self._reg_export)
+        self.servicemgr = ServiceManager(self.tweaks)
         self.bench_history = benchmark.BenchmarkHistory()
         self.sensors = sensors.SensorMonitor()
 
@@ -188,6 +190,40 @@ class Backend:
 
         return run(["reg", "export", f"{hive}\\{key}", str(target), "/y"], timeout=120).returncode == 0
 
+    def all_services(self):
+        from . import servicemgr
+
+        return servicemgr.list_all()
+
+    # built-in apps
+    def list_apps(self):
+        from . import appx
+
+        return appx.list_apps()
+
+    def remove_app(self, app):
+        from . import appx
+
+        return appx.remove(app)
+
+    def removed_apps(self) -> dict:
+        from . import appx
+
+        return appx.removed()
+
+    def reinstall_app(self, name: str):
+        from . import appx
+
+        return appx.reinstall(name)
+
+    def restart_explorer(self) -> int:
+        return self.run_command("taskkill /f /im explorer.exe & start explorer.exe", lambda _l: None)
+
+    def control_service(self, svc, action: str):
+        from . import servicemgr
+
+        return servicemgr.control(svc, action)
+
     def running_services(self):
         from . import services
 
@@ -247,6 +283,18 @@ class _DemoRunner:
                 return 0, str(folder in excl)
             self.exclusions = (excl | {folder}) if "Add-" in cmd else (excl - {folder})
             return 0, ""
+        if cmd.startswith("sc qc") or cmd.startswith("sc config"):
+            import re as _re
+
+            name = _re.search(r'"([^"]+)"', cmd).group(1)
+            modes = getattr(self, "service_modes", {})
+            if cmd.startswith("sc config"):
+                modes[name] = cmd.rsplit("start= ", 1)[1].strip()
+                self.service_modes = modes
+                return 0, "[SC] ChangeServiceConfig SUCCESS"
+            code = {"auto": "2   AUTO_START", "delayed-auto": "2   AUTO_START  (DELAYED)", "demand": "3   DEMAND_START",
+                    "disabled": "4   DISABLED"}[modes.get(name, "demand")]
+            return 0, f"SERVICE_NAME: {name}\n        START_TYPE         : {code}"
         if cmd.startswith("schtasks"):
             import re as _re
 
@@ -274,6 +322,8 @@ class DemoBackend(Backend):
         self.clean_targets = cleaner.build_targets()
         self.games = games.GameLibrary(self.tweaks, data / "games.json")
         self.ai_changes = AIChangeLog(self.tweaks, data / "ai_changes.json")
+        self.servicemgr = ServiceManager(self.tweaks, path=data / "service_changes.json")
+        self.tweaks.runner.service_modes = {n: m for n, _d, m, _x in self.DEMO_SERVICES}
         self.regedit = RegistryEditor(self.tweaks, export=lambda h, k, f: f.write_text(f"Demo export of {h}\\{k}")
                                       is not None, path=data / "registry_changes.json")
         for name, (val, kind) in {"MenuShowDelay": ("400", "SZ"), "FontSmoothing": ("2", "SZ"),
@@ -473,6 +523,78 @@ class DemoBackend(Backend):
 
     def open_url(self, url):
         pass
+
+    DEMO_SERVICES = [
+        ("AudioSrv", "Windows Audio", "auto", "Manages audio for Windows-based programs."),
+        ("BITS", "Background Intelligent Transfer Service", "delayed-auto", "Transfers files in the background."),
+        ("DiagTrack", "Connected User Experiences and Telemetry", "auto", "Collects and sends usage data."),
+        ("Fax", "Fax", "demand", "Sends and receives faxes."),
+        ("RpcSs", "Remote Procedure Call (RPC)", "auto", "The RPCSS service is the Service Control Manager for COM."),
+        ("Spooler", "Print Spooler", "auto", "Spools print jobs and handles interaction with the printer."),
+        ("SysMain", "SysMain", "auto", "Maintains and improves system performance over time."),
+        ("TabletInputService", "Touch Keyboard and Handwriting Panel Service", "demand", "Enables touch keyboard."),
+        ("WinDefend", "Microsoft Defender Antivirus Service", "auto", "Helps protect users from malware."),
+        ("WSearch", "Windows Search", "delayed-auto", "Provides content indexing and property caching."),
+        ("XblGameSave", "Xbox Live Game Save", "demand", "Syncs save data for Xbox Live save-enabled games."),
+        ("cbdhsvc_4f2a1", "Clipboard User Service_4f2a1", "auto", "Used for clipboard scenarios."),
+    ]
+
+    DEMO_APPS = [
+        ("Microsoft.BingNews", "Microsoft.BingNews_4.55.62231.0_x64__8wekyb3d8bbwe"),
+        ("Microsoft.GetHelp", "Microsoft.GetHelp_10.2409.22951.0_x64__8wekyb3d8bbwe"),
+        ("Microsoft.Getstarted", "Microsoft.Getstarted_10.2312.1.0_x64__8wekyb3d8bbwe"),
+        ("Microsoft.MicrosoftSolitaireCollection", "Microsoft.MicrosoftSolitaireCollection_4.21.0_x64__8wekyb3d8bbwe"),
+        ("Clipchamp.Clipchamp", "Clipchamp.Clipchamp_3.1.10_neutral__yxz26nhyzhsrt"),
+        ("Microsoft.WindowsFeedbackHub", "Microsoft.WindowsFeedbackHub_1.2411.1_x64__8wekyb3d8bbwe"),
+        ("Microsoft.ZuneMusic", "Microsoft.ZuneMusic_11.2410.15.0_x64__8wekyb3d8bbwe"),
+        ("Microsoft.GamingApp", "Microsoft.GamingApp_2410.1001.3.0_x64__8wekyb3d8bbwe"),
+        ("Microsoft.XboxGamingOverlay", "Microsoft.XboxGamingOverlay_7.324.10011.0_x64__8wekyb3d8bbwe"),
+        ("king.com.CandyCrushSaga", "king.com.CandyCrushSaga_1.2830.0_x86__kgqvnymyfvs32"),
+        ("Microsoft.WindowsCalculator", "Microsoft.WindowsCalculator_11.2409.0.0_x64__8wekyb3d8bbwe"),
+        ("Microsoft.WindowsStore", "Microsoft.WindowsStore_22409.1401.5.0_x64__8wekyb3d8bbwe"),
+        ("Microsoft.Windows.Photos", "Microsoft.Windows.Photos_2024.11100.16009.0_x64__8wekyb3d8bbwe"),
+    ]
+
+    def list_apps(self):
+        from .appx import parse_apps
+
+        gone = set(getattr(self, "_removed_apps", {}))
+        return parse_apps([{"Name": n, "Full": f, "Family": f.split("_")[0] + "_" + f.rsplit("__", 1)[-1]}
+                           for n, f in self.DEMO_APPS if n not in gone])
+
+    def remove_app(self, app):
+        if app.group == "protected":
+            return False, f"{app.friendly} is needed by Windows or other apps"
+        time.sleep(0.2)
+        self._removed_apps = {**getattr(self, "_removed_apps", {}), app.name: {"friendly": app.friendly}}
+        return True, ""
+
+    def removed_apps(self):
+        return dict(getattr(self, "_removed_apps", {}))
+
+    def reinstall_app(self, name):
+        self._removed_apps = {k: v for k, v in getattr(self, "_removed_apps", {}).items() if k != name}
+        return True, "reinstalled"
+
+    def restart_explorer(self):
+        return 0
+
+    def all_services(self):
+        from .servicemgr import ServiceInfo
+
+        modes = getattr(self.tweaks.runner, "service_modes", {})
+        stopped = getattr(self, "_stopped", set())
+        return [ServiceInfo(n, d, "Stopped" if n in stopped or modes.get(n, m) == "disabled" else "Running",
+                            modes.get(n, m), desc,
+                            f"C:\\Windows\\system32\\svchost.exe -k {n}")
+                for n, d, m, desc in self.DEMO_SERVICES]
+
+    def control_service(self, svc, action):
+        if action != "start" and svc.protected:
+            return False, f"{svc.display_name} is needed by Windows and can't be stopped here"
+        st = getattr(self, "_stopped", set())
+        self._stopped = (st | {svc.name}) if action == "stop" else (st - {svc.name})
+        return True, ""
 
     def running_services(self):
         from .services import RunningService

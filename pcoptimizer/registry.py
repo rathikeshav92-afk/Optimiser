@@ -21,6 +21,8 @@ class Registry(Protocol):
     def delete(self, hive: str, key: str, name: str) -> None: ...
     def values(self, hive: str, key: str) -> dict[str, tuple[Any, str]]: ...
     def subkeys(self, hive: str, key: str) -> list[str]: ...
+    def key_exists(self, hive: str, key: str) -> bool: ...
+    def delete_key(self, hive: str, key: str) -> None: ...
 
 
 class WinRegistry:
@@ -91,6 +93,22 @@ class WinRegistry:
             pass
         return sorted(out, key=str.lower)
 
+    def key_exists(self, hive, key):
+        try:
+            with winreg.OpenKey(self._hives[hive], key, 0, winreg.KEY_READ | winreg.KEY_WOW64_64KEY):
+                return True
+        except OSError:
+            return False
+
+    def delete_key(self, hive, key):
+        """Delete a key and everything under it (winreg can only delete empty keys)."""
+        for sub in self.subkeys(hive, key):
+            self.delete_key(hive, f"{key}\\{sub}")
+        try:
+            winreg.DeleteKeyEx(self._hives[hive], key, winreg.KEY_WOW64_64KEY, 0)
+        except FileNotFoundError:
+            pass
+
 
 class FakeRegistry:
     """In-memory registry used by tests and --demo mode."""
@@ -114,6 +132,19 @@ class FakeRegistry:
 
     def values(self, hive, key):
         return dict(self.data.get(self._k(hive, key), {}))
+
+    def key_exists(self, hive, key):
+        k = key.lower()
+        return any(h == hive and (kk == k or kk.startswith(k + "\\")) for h, kk in self.data)
+
+    def set_empty_key(self, hive, key):
+        self.data.setdefault(self._k(hive, key), {})
+
+    def delete_key(self, hive, key):
+        k = key.lower()
+        for h, kk in list(self.data):
+            if h == hive and (kk == k or kk.startswith(k + "\\")):
+                del self.data[(h, kk)]
 
     def subkeys(self, hive, key):
         prefix = (key.lower().rstrip("\\") + "\\") if key else ""

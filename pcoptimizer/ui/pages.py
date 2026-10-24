@@ -65,7 +65,8 @@ class Page(tk.Frame):
 class TweakList:
     """Checkbox list of tweaks with live 'Applied' status."""
 
-    def __init__(self, page: Page, parent, tweaks, applied_text="✔ Applied", not_applied_text="Not applied"):
+    def __init__(self, page: Page, parent, tweaks, applied_text="✔ Applied", not_applied_text="Not applied",
+                 optional_badge=True):
         self.page, self.tweaks = page, tweaks
         self.applied_text, self.not_applied_text = applied_text, not_applied_text
         self.vars = {t.id: tk.BooleanVar(value=t.recommended) for t in tweaks}
@@ -76,7 +77,7 @@ class TweakList:
             badges = []
             if t.needs_restart:
                 badges.append(("RESTART", T.WARN))
-            if not t.recommended:
+            if not t.recommended and optional_badge:
                 badges.append(("OPTIONAL", T.MUTED))
             desc = t.description + (f"\n⚠ {t.warning}" if t.warning else "")
             row = ToggleRow(parent, t.title, desc, self.vars[t.id], "…", badges=badges)
@@ -1192,63 +1193,180 @@ class ServicesPage(Page):
         self.list = TweakList(self, c.body, self.backend.tweaks.in_category("services"),
                               applied_text="✔ Disabled", not_applied_text="Enabled")
 
-        run = self.card("Running services", "Every service running right now. Stopping one frees its RAM until "
-                                            "the next restart (or until Windows needs it again). Services Windows "
-                                            "can't live without are marked PROTECTED and can't be stopped here.")
-        self.svc_tree = ttk.Treeview(run.body, columns=("name", "display", "start", "state"), show="headings",
-                                     height=12, selectmode="extended")
-        for col, title, w in (("display", "Service", 360), ("name", "Name", 180), ("start", "Starts", 110),
-                              ("state", "", 110)):
+        allc = self.card("All services", "Every service on your PC. Select one to see what it does, start, stop or "
+                                         "restart it, or change how it starts. Startup changes can be undone in "
+                                         "Backup & Restore. Services Windows can't live without are PROTECTED.")
+        bar = tk.Frame(allc.body, bg=T.CARD)
+        bar.pack(fill="x", pady=(0, 10))
+        tk.Label(bar, text="Search", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).pack(side="left")
+        self.search = tk.Entry(bar, bg="#0b0d12", fg=T.TEXT, insertbackground=T.TEXT, relief="flat", font=T.F_BODY,
+                               width=30)
+        self.search.pack(side="left", ipady=5, padx=(6, 14))
+        self.search.bind("<KeyRelease>", lambda _: self._render_all())
+        tk.Label(bar, text="Show", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).pack(side="left")
+        self.filter = ttk.Combobox(bar, state="readonly", width=16,
+                                   values=["All", "Running", "Stopped", "Automatic", "Manual", "Disabled",
+                                           "Changed by me"])
+        self.filter.set("All")
+        self.filter.pack(side="left", padx=6)
+        self.filter.bind("<<ComboboxSelected>>", lambda _: self._render_all())
+        self.count_lbl = tk.Label(bar, text="", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL)
+        self.count_lbl.pack(side="right")
+        Button(bar, "Refresh", self.load_all, color=T.CARD_HI, small=True).pack(side="right", padx=8)
+
+        self.svc_tree = ttk.Treeview(allc.body, columns=("display", "name", "state", "start"), show="headings",
+                                     height=14, selectmode="browse")
+        for col, title, w in (("display", "Service", 380), ("name", "Name", 170), ("state", "Status", 100),
+                              ("start", "Startup type", 150)):
             self.svc_tree.heading(col, text=title)
             self.svc_tree.column(col, width=w, anchor="w")
         self.svc_tree.tag_configure("protected", foreground=T.MUTED)
+        self.svc_tree.tag_configure("changed", foreground=T.ACCENT)
         self.svc_tree.pack(fill="x")
-        row = tk.Frame(run.body, bg=T.CARD)
-        row.pack(fill="x", pady=(10, 0))
-        Button(row, "Stop selected", lambda: self.set_running(False), color=T.BAD, small=True).pack(side="left")
-        Button(row, "Start selected", lambda: self.set_running(True), color=T.CARD_HI, small=True).pack(side="left",
-                                                                                                     padx=8)
-        Button(row, "Refresh", self.load_running, color=T.CARD_HI, small=True).pack(side="left")
-        self._running = {}
+        self.svc_tree.bind("<<TreeviewSelect>>", lambda _: self._show_selected())
+
+        det = tk.Frame(allc.body, bg=T.CARD_HI, padx=14, pady=12)
+        det.pack(fill="x", pady=(10, 0))
+        self.det_title = tk.Label(det, text="Select a service", bg=T.CARD_HI, fg=T.TEXT, font=(T.FAMILY, 10, "bold"),
+                                  anchor="w")
+        self.det_title.pack(fill="x")
+        self.det_desc = tk.Label(det, text="", bg=T.CARD_HI, fg=T.MUTED, font=T.F_SMALL, wraplength=820,
+                                 justify="left", anchor="w")
+        self.det_desc.pack(fill="x", pady=(2, 8))
+        act = tk.Frame(det, bg=T.CARD_HI)
+        act.pack(fill="x")
+        self.svc_btns = [Button(act, "Start", lambda: self.control("start"), color=T.CARD, small=True),
+                         Button(act, "Stop", lambda: self.control("stop"), color=T.BAD, small=True),
+                         Button(act, "Restart", lambda: self.control("restart"), color=T.CARD, small=True)]
+        for b in self.svc_btns:
+            b.pack(side="left", padx=(0, 6))
+        from ..servicemgr import MODES
+        self.mode_names = MODES
+        self.start_box = ttk.Combobox(act, state="readonly", width=20, values=list(MODES.values()))
+        self.start_box.pack(side="left", padx=(18, 6))
+        self.set_btn = Button(act, "Set startup type", self.set_start, small=True)
+        self.set_btn.pack(side="left")
+        self.undo_btn = Button(act, "Undo my change", self.undo_start, color=T.CARD, small=True)
+        self.undo_btn.pack(side="right")
+        self._all = []
+        self._set_actions(None)
         self.log = self.log_card()
 
     def on_show(self):
         self.list.refresh()
-        self.load_running()
+        if not self._all:
+            self.load_all()
 
-    def load_running(self):
+    # ------------------------------------------------------------------ all services
+    def load_all(self):
         def done(svcs):
-            self._running = {s.name: s for s in svcs}
-            self.svc_tree.delete(*self.svc_tree.get_children())
-            for s in sorted(svcs, key=lambda s: (s.protected, s.display_name.lower())):
-                self.svc_tree.insert("", "end", iid=s.name, tags=("protected",) if s.protected else (),
-                                     values=(s.name, s.display_name, s.start_type,
-                                             "PROTECTED" if s.protected else "Running"))
+            self._all = svcs
+            self._render_all()
 
-        self.app.bg(self.backend.running_services, done, label="Listing services")
+        self.app.bg(self.backend.all_services, done, label="Listing services")
 
-    def set_running(self, run):
-        names = list(self.svc_tree.selection())
-        if not names:
+    def _visible(self):
+        q = self.search.get().strip().lower()
+        f = self.filter.get()
+        changed = self.backend.servicemgr.changed_names()
+        for s in self._all:
+            if q and q not in s.display_name.lower() and q not in s.name.lower() and q not in s.description.lower():
+                continue
+            if f == "Running" and s.state != "Running" or f == "Stopped" and s.state == "Running":
+                continue
+            if f == "Automatic" and not s.mode.endswith("auto") or f == "Manual" and s.mode != "demand":
+                continue
+            if f == "Disabled" and s.mode != "disabled" or f == "Changed by me" and s.name not in changed:
+                continue
+            yield s
+
+    def _render_all(self):
+        sel = self.svc_tree.selection()
+        changed = self.backend.servicemgr.changed_names()
+        self.svc_tree.delete(*self.svc_tree.get_children())
+        shown = 0
+        for s in self._visible():
+            tag = "protected" if s.protected else "changed" if s.name in changed else ""
+            self.svc_tree.insert("", "end", iid=s.name, tags=(tag,) if tag else (),
+                                 values=(s.display_name, s.name, s.state,
+                                         s.start_label + ("  (protected)" if s.protected else "")))
+            shown += 1
+        self.count_lbl.configure(text=f"{shown} of {len(self._all)} services")
+        if sel and self.svc_tree.exists(sel[0]):
+            self.svc_tree.selection_set(sel[0])
+        else:
+            self._set_actions(None)
+
+    def _selected_svc(self):
+        sel = self.svc_tree.selection()
+        return next((s for s in self._all if sel and s.name == sel[0]), None)
+
+    def _set_actions(self, svc):
+        locked = svc is None or svc.protected
+        self.svc_btns[0].set_enabled(svc is not None and svc.state != "Running")
+        self.svc_btns[1].set_enabled(not locked and svc.state == "Running" and svc.can_stop)
+        self.svc_btns[2].set_enabled(not locked and svc.state == "Running" and svc.can_stop)
+        self.set_btn.set_enabled(not locked and not svc.per_user)
+        self.undo_btn.set_enabled(svc is not None and svc.name in self.backend.servicemgr.changed_names())
+
+    def _show_selected(self):
+        svc = self._selected_svc()
+        if svc is None:
             return
-        if not run:
-            blocked = [n for n in names if self._running.get(n) and self._running[n].protected]
-            names = [n for n in names if n not in blocked]
-            for n in blocked:
-                self.log.write(f"[FAILED] {n} is protected - Windows needs it")
-            if not names or not self.confirm("Stop services", "Stop these services until the next restart?\n\n"
-                                             + "\n".join(self._running[n].display_name for n in names
-                                                         if n in self._running)
-                                             + "\n\nTo keep one off for good, disable it in the list above."):
-                return
+        note = ("  \u2022  PROTECTED - Windows needs this service" if svc.protected else
+                "  \u2022  per-user copy - change the main service instead" if svc.per_user else "")
+        self.det_title.configure(text=f"{svc.display_name}  ({svc.name}){note}")
+        self.det_desc.configure(text=(svc.description or "No description.") + (f"\n{svc.path}" if svc.path else ""))
+        self.start_box.set(svc.start_label if svc.mode in self.mode_names else "")
+        self._set_actions(svc)
+
+    def control(self, action):
+        svc = self._selected_svc()
+        if svc is None:
+            return
+        if action == "stop" and not self.confirm("Stop service", f"Stop {svc.display_name} until it's started again "
+                                                                 "or the PC restarts?"):
+            return
         log = self.app.logger(self.log)
 
         def work():
-            for n in names:
-                ok, msg = self.backend.set_service_running(n, run)
-                log(f"[OK] {'Started' if run else 'Stopped'} {n}" if ok else f"[FAILED] {n}: {msg}")
+            ok, msg = self.backend.control_service(svc, action)
+            log(f"[OK] {action.title()}ed {svc.display_name}".replace("Stoped", "Stopped") if ok else
+                f"[FAILED] {svc.display_name}: {msg}")
 
-        self.app.bg(work, lambda _: self.load_running(), label="Updating services")
+        self.app.bg(work, lambda _: self.load_all(), label="Updating service")
+
+    def set_start(self):
+        svc = self._selected_svc()
+        label = self.start_box.get()
+        mode = next((k for k, v in self.mode_names.items() if v == label), None)
+        if svc is None or mode is None or mode == svc.mode:
+            return
+        warn = "\n\nDisabled services can't start at all - some apps or devices may stop working." \
+            if mode == "disabled" else ""
+        if not self.confirm("Change startup type", f"Set {svc.display_name} to start: {label}?{warn}\n\n"
+                                                   "You can undo this in Backup & Restore."):
+            return
+        log = self.app.logger(self.log)
+
+        def work():
+            self.backend.servicemgr.set_start(svc, mode)
+            log(f"[OK] {svc.display_name}: startup type is now {label}")
+
+        self.app.bg(work, lambda _: self.load_all(), error=lambda e: self.log.write(f"[FAILED] {e}"),
+                    label="Changing startup type")
+
+    def undo_start(self):
+        svc = self._selected_svc()
+        if svc is None:
+            return
+        sm = self.backend.servicemgr
+
+        def work():
+            sm.undo(svc.name)
+            self.app.ui(lambda: self.log.write(f"[OK] {svc.display_name}: original startup type restored"))
+
+        self.app.bg(work, lambda _: self.load_all(), label="Restoring service")
 
     def recommended(self):
         for t in self.list.tweaks:
@@ -2600,3 +2718,156 @@ class FixAllDialog(tk.Toplevel):
         self.result = chosen or None
         self.grab_release()
         self.destroy()
+
+
+# =============================================================================== Built-in apps
+
+
+class AppsPage(Page):
+    GROUPS = [("bloat", "Bloat - safe to remove", "Preinstalled extras most people never use. Ticked for you."),
+              ("optional", "Optional", "Remove only if you don't use them - read the notes."),
+              ("other", "Other installed Store apps", "Apps you or Windows installed from the Microsoft Store.")]
+
+    def build(self):
+        self.header("Built-in Apps", "Remove preinstalled Windows apps you don't use. Apps Windows needs (Store, "
+                                     "Calculator, Photos, Notepad, Windows Security, codecs, driver panels) are "
+                                     "protected. Removed apps can be reinstalled.")
+        top = self.card()
+        row = tk.Frame(top.body, bg=T.CARD)
+        row.pack(fill="x")
+        self.remove_btn = Button(row, "Remove selected", self.remove, color=T.BAD)
+        self.remove_btn.pack(side="left")
+        Button(row, "Refresh", self.load, color=T.CARD_HI, small=True).pack(side="left", padx=8)
+        self.status = tk.Label(row, text="Loading apps...", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL)
+        self.status.pack(side="right")
+        self.group_cards = {g: self.card(title, desc) for g, title, desc in self.GROUPS}
+        self.removed_card = self.card("Removed apps", "Apps removed with PC Optimizer. Reinstall brings them back.")
+        self.log = self.log_card(height=6)
+        self.vars = {}
+        self._apps = {}
+        self._loaded = False
+
+    def on_show(self):
+        if not self._loaded:
+            self._loaded = True
+            self.load()
+
+    def load(self):
+        self.app.bg(lambda: (self.backend.list_apps(), self.backend.removed_apps()), self.render,
+                    label="Listing apps")
+
+    def render(self, res):
+        apps, removed = res
+        self._apps = {a.name: a for a in apps}
+        self.vars = {}
+        for g, card in self.group_cards.items():
+            for w in card.body.winfo_children():
+                w.destroy()
+            items = [a for a in apps if a.group == g]
+            if not items:
+                tk.Label(card.body, text="Nothing here.", bg=T.CARD, fg=T.MUTED).pack(anchor="w")
+            for i, a in enumerate(items):
+                if i:
+                    tk.Frame(card.body, bg=T.BORDER, height=1).pack(fill="x", pady=6)
+                self.vars[a.name] = tk.BooleanVar(value=g == "bloat")
+                desc = a.name + (f"\n⚠ {a.warning}" if a.warning else "")
+                ToggleRow(card.body, a.friendly, desc, self.vars[a.name]).pack(fill="x")
+        protected = sum(a.group == "protected" for a in apps)
+        self.status.configure(text=f"{len(apps) - protected} removable apps • {protected} protected (hidden)")
+        body = self.removed_card.body
+        for w in body.winfo_children():
+            w.destroy()
+        if not removed:
+            tk.Label(body, text="None yet.", bg=T.CARD, fg=T.MUTED).pack(anchor="w")
+        for name, info in removed.items():
+            r = tk.Frame(body, bg=T.CARD)
+            r.pack(fill="x", pady=2)
+            tk.Label(r, text=info.get("friendly", name), bg=T.CARD, fg=T.TEXT).pack(side="left")
+            Button(r, "Reinstall", lambda n=name: self.reinstall(n), color=T.CARD_HI, small=True).pack(side="right")
+
+    def remove(self):
+        chosen = [self._apps[n] for n, v in self.vars.items() if v.get()]
+        if not chosen or not self.confirm("Remove apps", f"Remove {len(chosen)} app(s) for your account?\n\n"
+                                          + "\n".join(f"• {a.friendly}" for a in chosen[:25])
+                                          + ("\n..." if len(chosen) > 25 else "")
+                                          + "\n\nYou can reinstall them later from the 'Removed apps' list."):
+            return
+        self.remove_btn.set_enabled(False)
+        log = self.app.logger(self.log)
+
+        def work():
+            for a in chosen:
+                ok, msg = self.backend.remove_app(a)
+                log(f"[OK] Removed {a.friendly}" if ok else f"[FAILED] {a.friendly}: {msg}")
+
+        def done(_):
+            self.remove_btn.set_enabled(True)
+            self.load()
+
+        self.app.bg(work, done, label="Removing apps")
+
+    def reinstall(self, name):
+        log = self.app.logger(self.log)
+
+        def work():
+            ok, msg = self.backend.reinstall_app(name)
+            log(f"[OK] {name} reinstalled" if ok else f"> {name}: {msg}")
+
+        self.app.bg(work, lambda _: self.load(), label="Reinstalling app")
+
+
+# =============================================================================== Look & feel
+
+
+class LookFeelPage(Page):
+    def build(self):
+        self.header("Look & Feel", "Change how Windows looks and behaves - right-click menu, taskbar, File "
+                                   "Explorer and theme. Every change can be undone.")
+        c = self.card()
+        row = tk.Frame(c.body, bg=T.CARD)
+        row.pack(fill="x", pady=(0, 14))
+        self.apply_btn = Button(row, "Apply selected", self.apply)
+        self.apply_btn.pack(side="left")
+        Button(row, "Undo selected", self.undo, color=T.CARD_HI).pack(side="left", padx=8)
+        tk.Label(row, text="Explorer restarts automatically to show the changes (your taskbar blinks once).",
+                 bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).pack(side="right")
+        self.list = TweakList(self, c.body, self.backend.tweaks.in_category("appearance"), optional_badge=False)
+        self.log = self.log_card(height=6)
+
+    def on_show(self):
+        self.list.refresh()
+
+    def _run(self, ids, undo):
+        mgr, log = self.backend.tweaks, self.app.logger(self.log)
+        self.apply_btn.set_enabled(False)
+
+        def work():
+            for i in ids:
+                title = mgr.by_id[i].title
+                try:
+                    if undo:
+                        if mgr.revert(i):
+                            log(f"[OK] Restored: {title}")
+                    else:
+                        mgr.apply(i)
+                        log(f"[OK] {title}")
+                except Exception as exc:
+                    log(f"[FAILED] {title}: {exc}")
+            self.backend.restart_explorer()
+            log("> Explorer restarted")
+
+        def done(_):
+            self.apply_btn.set_enabled(True)
+            self.list.refresh()
+
+        self.app.bg(work, done, label="Applying")
+
+    def apply(self):
+        ids = self.list.selected()
+        if ids:
+            self._run(ids, undo=False)
+
+    def undo(self):
+        ids = self.list.selected()
+        if ids:
+            self._run(ids, undo=True)

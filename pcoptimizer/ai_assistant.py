@@ -130,6 +130,17 @@ TOOLS = [
           {"steps": {"type": "array", "items": {"type": "string", "enum": ["restore_point", "speed", "privacy",
                                                                           "services", "clean", "ram", "dns"]}},
            "reason": REASON}),
+    _tool("list_all_services", "Every Windows service with status, startup type, description and whether it is "
+          "protected. Use 'search' to filter by name or description (empty string for all).",
+          {"search": {"type": "string"}}),
+    _tool("set_service_startup", "Change a service's startup type (auto, delayed-auto, demand = Manual, disabled). "
+          "Undoable in Backup & Restore. Protected services can't be changed.",
+          {"name": {"type": "string"}, "mode": {"type": "string", "enum": ["auto", "delayed-auto", "demand",
+                                                                           "disabled"]}, "reason": REASON}),
+    _tool("list_builtin_apps", "Preinstalled Windows/Store apps with their group: bloat, optional, other or "
+          "protected (protected ones can't be removed)."),
+    _tool("remove_builtin_apps", "Remove built-in apps by package name (from list_builtin_apps). They can be "
+          "reinstalled from the Built-in Apps page.", {"names": IDS, "reason": REASON}),
     _tool("open_windows_settings", "Open a Windows Settings page for the user, e.g. 'ms-settings:display', "
           "'ms-settings:network-status', 'ms-settings:windowsupdate', 'ms-settings:sound'.",
           {"uri": {"type": "string"}}),
@@ -604,3 +615,45 @@ class Assistant:
             self._specs = self.backend.specs()
         findings = health.evaluate(self.backend.health_facts(self._specs))
         return json.dumps([{"check": f.title, "status": f.status, "detail": f.detail} for f in findings])
+
+    def _t_list_all_services(self, search: str = "") -> str:
+        from .servicemgr import to_dict
+
+        q = (search or "").lower()
+        svcs = [s for s in self.backend.all_services()
+                if not q or q in s.name.lower() or q in s.display_name.lower() or q in s.description.lower()]
+        return json.dumps([{k: v for k, v in to_dict(s).items() if k in ("name", "display_name", "state", "start",
+                                                                          "protected", "description")}
+                           for s in svcs[:80]])
+
+    def _t_set_service_startup(self, name: str, mode: str, reason: str) -> str:
+        from .servicemgr import MODES
+
+        svc = next((s for s in self.backend.all_services() if s.name.lower() == name.lower()), None)
+        if svc is None:
+            raise ValueError(f"No service named {name!r}")
+        self._ask(f"Set {svc.display_name} to {MODES[mode]}", f"Currently: {svc.start_label}", reason,
+                  "Undo it any time in Backup & Restore.")
+        self.backend.servicemgr.set_start(svc, mode)
+        self.notify(f"{svc.display_name}: {MODES[mode]}")
+        return f"{svc.display_name} now starts: {MODES[mode]}."
+
+    def _t_list_builtin_apps(self) -> str:
+        return json.dumps([{"name": a.name, "app": a.friendly, "group": a.group, "note": a.warning}
+                           for a in self.backend.list_apps()])
+
+    def _t_remove_builtin_apps(self, names: list[str], reason: str) -> str:
+        apps = {a.name.lower(): a for a in self.backend.list_apps()}
+        chosen = [apps[n.lower()] for n in names if n.lower() in apps]
+        if not chosen:
+            raise ValueError("None of those apps are installed. Call list_builtin_apps first.")
+        blocked = [a.friendly for a in chosen if a.group == "protected"]
+        if blocked:
+            raise ValueError(f"Protected apps can't be removed: {blocked}")
+        self._ask("Remove apps", "\n".join(f"• {a.friendly}" for a in chosen), reason,
+                  "They can be reinstalled later from the Built-in Apps page.")
+        out = []
+        for a in chosen:
+            ok, msg = self.backend.remove_app(a)
+            out.append(f"{'Removed' if ok else 'FAILED'} {a.friendly}{'' if ok else ': ' + msg}")
+        return "\n".join(out)

@@ -332,7 +332,72 @@ def build_catalogue() -> list[Tweak]:
             revert_cmd="powercfg /hibernate on",
             check=_reg_check(HKLM, r"SYSTEM\CurrentControlSet\Control\Power", "HibernateEnabled", 0),
         ),
-    ] + _privacy_tweaks() + _service_tweaks()
+    ] + _privacy_tweaks() + _appearance_tweaks() + _service_tweaks()
+
+
+@dataclass
+class RegistryKeyTweak(Tweak):
+    """Like Tweak, but undo also deletes ``owned_key`` if this tweak created it."""
+
+    owned_key: tuple[str, str] = ("HKCU", "")
+
+    def snapshot(self, ctx) -> dict:
+        snap = super().snapshot(ctx)
+        snap["key_existed"] = ctx.registry.key_exists(*self.owned_key)
+        return snap
+
+    def revert(self, ctx, backup) -> None:
+        if backup.get("key_existed") is False:
+            ctx.registry.delete_key(*self.owned_key)
+        else:
+            super().revert(ctx, backup)
+
+
+ADV = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+CLASSIC_MENU = r"Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}"
+
+
+def _appearance_tweaks() -> list[Tweak]:
+    def t(id_, title, desc, values, warning=""):
+        return Tweak(id_, title, desc, "appearance", values, recommended=False, warning=warning)
+
+    return [
+        RegistryKeyTweak(
+            "classic_context_menu", "Classic right-click menu (Windows 11)",
+            "Shows the full right-click menu straight away instead of 'Show more options'.", "appearance",
+            [RegValue(HKCU, CLASSIC_MENU + r"\InprocServer32", "", "", "SZ")],
+            recommended=False, owned_key=(HKCU, CLASSIC_MENU),
+        ),
+        t("taskbar_left", "Taskbar icons on the left (Windows 11)", "Moves the Start button and icons to the left "
+          "like Windows 10.", [RegValue(HKCU, ADV, "TaskbarAl", 0)]),
+        t("show_extensions", "Show file extensions", "Shows .exe, .pdf, .jpg... - also helps spot fake 'photo.jpg.exe' "
+          "files.", [RegValue(HKCU, ADV, "HideFileExt", 0)]),
+        t("show_hidden", "Show hidden files", "Shows hidden files and folders in File Explorer.",
+          [RegValue(HKCU, ADV, "Hidden", 1)]),
+        t("explorer_this_pc", "Open File Explorer to 'This PC'", "Opens on your drives instead of Home/Quick access.",
+          [RegValue(HKCU, ADV, "LaunchTo", 1)]),
+        t("compact_explorer", "Compact File Explorer", "Less space between items, so more files fit on screen.",
+          [RegValue(HKCU, ADV, "UseCompactMode", 1)]),
+        t("full_path_title", "Full path in File Explorer's title", "Shows the whole folder path at the top.",
+          [RegValue(HKCU, r"Software\Microsoft\Windows\CurrentVersion\Explorer\CabinetState", "FullPath", 1)]),
+        t("hide_task_view", "Hide the Task View button", "Removes the Task View button from the taskbar "
+          "(Win+Tab still works).", [RegValue(HKCU, ADV, "ShowTaskViewButton", 0)]),
+        t("search_icon_only", "Taskbar search: icon only", "Replaces the wide search box with a small icon.",
+          [RegValue(HKCU, r"Software\Microsoft\Windows\CurrentVersion\Search", "SearchboxTaskbarMode", 1)]),
+        t("hide_widgets_button", "Hide the Widgets button", "Removes the weather/news button from the taskbar.",
+          [RegValue(HKCU, ADV, "TaskbarDa", 0)],
+          warning="On some Windows 11 versions Windows blocks this - use Settings > Personalization > Taskbar."),
+        t("hide_chat_button", "Hide the Chat/Teams button", "Removes the Chat button from the Windows 11 taskbar.",
+          [RegValue(HKCU, ADV, "TaskbarMn", 0)]),
+        t("end_task_taskbar", "'End task' on taskbar right-click", "Adds End task when you right-click an app on the "
+          "taskbar - handy for frozen games (Windows 11 23H2+).",
+          [RegValue(HKCU, ADV + r"\TaskbarDeveloperSettings", "TaskbarEndTask", 1)]),
+        t("dark_mode", "Dark mode", "Dark theme for Windows and apps.",
+          [RegValue(HKCU, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 0),
+           RegValue(HKCU, r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "SystemUsesLightTheme", 0)]),
+        t("clock_seconds", "Show seconds on the taskbar clock", "Windows 11 23H2 and later.",
+          [RegValue(HKCU, ADV, "ShowSecondsInSystemClock", 1)], warning="Uses a tiny bit more power."),
+    ]
 
 
 TELEMETRY_TASKS = [
