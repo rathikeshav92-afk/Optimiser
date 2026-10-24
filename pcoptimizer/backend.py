@@ -7,7 +7,7 @@ import time
 from types import SimpleNamespace
 from typing import Callable
 
-from . import benchmark, cleaner, games, processes, sensors, system_info
+from . import benchmark, cleaner, games, processes, screentime, sensors, system_info
 from .ai_assistant import AIChangeLog
 from .platform_utils import is_admin, stream
 from .registry import FakeRegistry, default_registry
@@ -85,6 +85,19 @@ class Backend:
     def run_benchmark(self, progress) -> benchmark.BenchResult:
         return benchmark.run(progress)
 
+    # screen time
+    def screentime_report(self, period: str, anchor=None) -> screentime.Report:
+        return screentime.report(period, anchor)
+
+    def screentime_enabled(self) -> bool:
+        return screentime.autostart_enabled()
+
+    def set_screentime(self, enabled: bool) -> tuple[bool, str]:
+        return screentime.enable_autostart() if enabled else screentime.disable_autostart()
+
+    def clear_screentime(self) -> None:
+        screentime.clear()
+
     def shutdown(self) -> None:
         self.sensors.stop()
 
@@ -124,6 +137,7 @@ class DemoBackend(Backend):
 
         self.registry = FakeRegistry()
         data = Path(data_dir or tempfile.mkdtemp(prefix="pcoptimizer_demo_"))
+        self.data = data
         self.tweaks = TweakManager(self.registry, _DemoRunner(), backup_path=data / "backup.json")
         self.cpu = system_info.CpuMeter()
         self.clean_targets = cleaner.build_targets()
@@ -198,6 +212,25 @@ class DemoBackend(Backend):
     def ai_client(self):
         return DemoAIClient()
 
+    def _screentime_db(self):
+        if not hasattr(self, "_st_db"):
+            self._st_db = self.data / "screentime.db"
+            _fill_demo_screentime(self._st_db)
+        return self._st_db
+
+    def screentime_report(self, period, anchor=None):
+        return screentime.report(period, anchor, self._screentime_db())
+
+    def screentime_enabled(self):
+        return getattr(self, "_st_on", True)
+
+    def set_screentime(self, enabled):
+        self._st_on = enabled
+        return True, ""
+
+    def clear_screentime(self):
+        screentime.clear(self._screentime_db())
+
     def run_benchmark(self, progress):
         base = {"cpu_single": 1650, "cpu_multi": 14800, "ram_copy": 11.8, "disk_write": 2400, "disk_iops": 2100,
                 "bg_cpu": 9.5, "free_ram": 5.6}
@@ -244,3 +277,32 @@ class DemoAIClient:
             "Your PC is in good shape overall (rating 85/100). I found two things slowing it down and fixed them:\n"
             "1. Turned off background game recording, which was costing FPS.\n"
             "2. Removed the 10-second startup delay.\n\nRestart your PC when convenient to finish applying them.")))
+
+
+def _fill_demo_screentime(path) -> None:
+    """Six weeks of plausible usage so the Screen Time page has something to show."""
+    import datetime as dt
+    from contextlib import closing
+
+    rnd = random.Random(7)
+    apps = {"chrome.exe": (2.2, range(9, 23)), "discord.exe": (1.1, range(16, 24)), "cs2.exe": (1.4, range(18, 24)),
+            "code.exe": (1.6, range(10, 18)), "spotify.exe": (0.5, range(9, 22)), "explorer.exe": (0.3, range(9, 23)),
+            "winword.exe": (0.6, range(10, 17)), "steam.exe": (0.25, range(17, 23)), "vlc.exe": (0.4, range(20, 24)),
+            "whatsapp.exe": (0.3, range(8, 23))}
+    names = {a: screentime.pretty_name(a) for a in apps}
+    today, now_hour = dt.date.today(), max(15, dt.datetime.now().hour)
+    buckets = {}
+    for back in range(42):
+        day = today - dt.timedelta(days=back)
+        weekend = day.weekday() >= 5
+        for app, (hours, window) in apps.items():
+            h = hours * rnd.uniform(0.4, 1.4) * (1.5 if weekend and app in ("cs2.exe", "discord.exe") else 1)
+            hrs = [x for x in window if back or x <= now_hour]
+            if not hrs:
+                continue
+            for _ in range(max(1, int(h * 3))):
+                hr = rnd.choice(hrs)
+                key = (day.isoformat(), hr, app)
+                buckets[key] = min(3600, buckets.get(key, 0) + h * 3600 / max(1, int(h * 3)))
+    with closing(screentime.connect(path)) as conn:
+        screentime.record(conn, buckets, names)

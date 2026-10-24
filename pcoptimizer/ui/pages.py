@@ -1412,3 +1412,294 @@ class AssistantPage(Page):
         self.transcript.delete("1.0", "end")
         self.transcript.configure(state="disabled")
         self._say("ai", "New chat started. What can I help with?")
+
+
+# =============================================================================== Screen time
+
+
+class UsageChart(tk.Canvas):
+    """Single-series bar chart of screen time with a hover tooltip."""
+
+    PAD_L, PAD_R, PAD_T, PAD_B = 58, 12, 12, 26
+
+    def __init__(self, parent, height=220):
+        super().__init__(parent, height=height, bg=T.CARD, highlightthickness=0)
+        self.series: list[tuple[str, int]] = []
+        self.tip_labels: list[str] = []
+        self._bars: list[tuple[float, float, int]] = []
+        self.bind("<Configure>", lambda _: self.draw())
+        self.bind("<Motion>", self._hover)
+        self.bind("<Leave>", lambda _: self.delete("tip"))
+
+    def set(self, series, tip_labels):
+        self.series, self.tip_labels = series, tip_labels
+        self.draw()
+
+    @staticmethod
+    def _nice_step(max_seconds):
+        for step in (300, 600, 900, 1800, 3600, 7200, 10800, 14400, 21600):
+            if max_seconds / step <= 4:
+                return step
+        return 43200
+
+    def draw(self):
+        from ..screentime import fmt_duration
+
+        self.delete("all")
+        w, h = self.winfo_width(), self.winfo_height()
+        if w < 50 or not self.series:
+            return
+        top = max([v for _, v in self.series] + [1])
+        step = self._nice_step(top)
+        ymax = step * max(1, -(-top // step))
+        x0, x1, y0, y1 = self.PAD_L, w - self.PAD_R, self.PAD_T, h - self.PAD_B
+        for v in range(0, ymax + 1, step):  # recessive grid
+            y = y1 - (y1 - y0) * v / ymax
+            self.create_line(x0, y, x1, y, fill=T.BORDER)
+            tick = "0" if not v else f"{v // 3600}h" if v % 3600 == 0 else fmt_duration(v)
+            self.create_text(x0 - 8, y, text=tick, anchor="e", fill=T.MUTED, font=T.F_SMALL)
+        n = len(self.series)
+        slot = (x1 - x0) / n
+        bw = max(3.0, min(36.0, slot * 0.72, slot - 2))  # always a visible surface gap between bars
+        label_every = 1 if n <= 12 else 3 if n <= 24 else 5
+        self._bars = []
+        r = 3
+        for i, (label, v) in enumerate(self.series):
+            cx = x0 + slot * (i + 0.5)
+            bx0, bx1 = cx - bw / 2, cx + bw / 2
+            self._bars.append((x0 + slot * i, x0 + slot * (i + 1), i))
+            if v > 0:
+                by = y1 - max(2, (y1 - y0) * v / ymax)
+                if y1 - by > 2 * r and bw > 2 * r:  # rounded data-end, square at the baseline
+                    self.create_rectangle(bx0, by + r, bx1, y1, fill=T.ACCENT, width=0)
+                    self.create_rectangle(bx0 + r, by, bx1 - r, by + r, fill=T.ACCENT, width=0)
+                    self.create_oval(bx0, by, bx0 + 2 * r, by + 2 * r, fill=T.ACCENT, width=0)
+                    self.create_oval(bx1 - 2 * r, by, bx1, by + 2 * r, fill=T.ACCENT, width=0)
+                else:
+                    self.create_rectangle(bx0, by, bx1, y1, fill=T.ACCENT, width=0)
+            if i % label_every == 0 or n <= 12:
+                self.create_text(cx, y1 + 13, text=label, fill=T.MUTED, font=T.F_SMALL)
+        self.create_line(x0, y1, x1, y1, fill=T.MUTED)
+
+    def _hover(self, event):
+        from ..screentime import fmt_duration
+
+        self.delete("tip")
+        for lo, hi, i in self._bars:
+            if lo <= event.x < hi:
+                label, v = self.tip_labels[i], self.series[i][1]
+                text = f"{label}\n{fmt_duration(v)}"
+                x = min(max(event.x, 70), self.winfo_width() - 70)
+                t = self.create_text(x, 16, text=text, fill=T.TEXT, font=T.F_SMALL, justify="center", tags="tip",
+                                     anchor="n")
+                bx0, by0, bx1, by1 = self.bbox(t)
+                bg = self.create_rectangle(bx0 - 8, by0 - 5, bx1 + 8, by1 + 5, fill=T.CARD_HI, outline=T.BORDER,
+                                           tags="tip")
+                self.tag_lower(bg, t)
+                cx = lo + (hi - lo) / 2
+                hl = self.create_line(cx, by1 + 6, cx, self.winfo_height() - self.PAD_B, fill=T.MUTED, dash=(2, 3),
+                                      tags="tip")
+                self.tag_lower(hl)
+                return
+
+
+class ScreenTimePage(Page):
+    PERIOD_NAMES = {"day": "Daily", "week": "Weekly", "month": "Monthly"}
+    PREV_WORD = {"day": "the day before", "week": "last week", "month": "last month"}
+
+    def build(self):
+        import datetime as dt
+
+        self.header("Screen Time", "How long you use each app. Pick Daily, Weekly or Monthly and use the arrows "
+                                   "to look back in time.", T.BALANCED)
+        self.period, self.anchor = "day", dt.date.today()
+
+        st = self.card()
+        row = tk.Frame(st.body, bg=T.CARD)
+        row.pack(fill="x")
+        self.status = tk.Label(row, text="Checking tracker...", bg=T.CARD, fg=T.MUTED, font=(T.FAMILY, 10, "bold"))
+        self.status.pack(side="left")
+        self.toggle_btn = Button(row, "Turn on", self.toggle, small=True)
+        self.toggle_btn.pack(side="right")
+        Button(row, "Clear history", self.clear, color=T.CARD_HI, small=True).pack(side="right", padx=8)
+        tk.Label(st.body, text="Private: only app names and minutes are saved, on this PC only. Window titles, "
+                               "websites and typing are never recorded. Idle time (5+ min with no input, unless a "
+                               "video or game keeps the screen on) and locked time don't count.",
+                 bg=T.CARD, fg=T.MUTED, font=T.F_SMALL, wraplength=840, justify="left").pack(anchor="w", pady=(8, 0))
+
+        nav = tk.Frame(self.body, bg=T.BG)
+        nav.pack(fill="x", pady=(0, 14))
+        self.tabs = {}
+        seg = tk.Frame(nav, bg=T.CARD_HI, padx=3, pady=3)
+        seg.pack(side="left")
+        for key, name in self.PERIOD_NAMES.items():
+            lbl = tk.Label(seg, text=name, bg=T.CARD_HI, fg=T.MUTED, font=(T.FAMILY, 10, "bold"), padx=18, pady=6,
+                           cursor="hand2")
+            lbl.pack(side="left")
+            lbl.bind("<Button-1>", lambda _, k=key: self.set_period(k))
+            self.tabs[key] = lbl
+        self.next_btn = Button(nav, "›", lambda: self.move(1), color=T.CARD_HI)
+        self.next_btn.pack(side="right")
+        self.range_lbl = tk.Label(nav, text="", bg=T.BG, fg=T.TEXT, font=(T.FAMILY, 11, "bold"), width=24)
+        self.range_lbl.pack(side="right", padx=6)
+        Button(nav, "‹", lambda: self.move(-1), color=T.CARD_HI).pack(side="right")
+
+        summary = tk.Frame(self.body, bg=T.BG)
+        summary.pack(fill="x", pady=(0, 16))
+        self.tiles = {}
+        for col, (key, title) in enumerate((("total", "Total screen time"), ("avg", "Daily average"),
+                                            ("change", "Compared with before"), ("top", "Most used app"))):
+            summary.columnconfigure(col, weight=1, uniform="tile")
+            tile = tk.Frame(summary, bg=T.CARD, highlightthickness=1, highlightbackground=T.BORDER, padx=16, pady=12)
+            tile.grid(row=0, column=col, sticky="nsew", padx=(0 if col == 0 else 6, 0 if col == 3 else 6))
+            tk.Label(tile, text=title.upper(), bg=T.CARD, fg=T.MUTED, font=(T.FAMILY, 8, "bold")).pack(anchor="w")
+            val = tk.Label(tile, text="-", bg=T.CARD, fg=T.TEXT, font=(T.FAMILY, 15 if key == "top" else 20, "bold"),
+                           anchor="w")
+            val.pack(anchor="w", fill="x")
+            sub = tk.Label(tile, text="", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL, anchor="w")
+            sub.pack(anchor="w", fill="x")
+            self.tiles[key] = (val, sub)
+
+        self.chart_card = self.card()
+        self.chart_title = tk.Label(self.chart_card.body, text="", bg=T.CARD, fg=T.TEXT, font=T.F_H2)
+        self.chart_title.pack(anchor="w", pady=(0, 10))
+        self.chart = UsageChart(self.chart_card.body)
+        self.chart.pack(fill="x")
+        self.apps_card = self.card("Apps")
+        self.set_period("day")
+
+    # ------------------------------------------------------------------ tracker on/off
+    def on_show(self):
+        self.refresh()
+
+        def done(on):
+            self._tracking = on
+            self.status.configure(text="● Tracking is on - starts automatically when you sign in" if on else
+                                  "○ Tracking is off - turn it on to start recording screen time",
+                                  fg=T.GOOD if on else T.WARN)
+            self.toggle_btn.configure(text="Turn off" if on else "Turn on")
+            if on and not self.backend.demo and not getattr(self, "_refreshed_task", False):
+                # Re-register once per launch so the task follows the app if it was moved or updated.
+                self._refreshed_task = True
+                self.app.bg(lambda: self.backend.set_screentime(True), label="Starting tracker")
+
+        self.app.bg(self.backend.screentime_enabled, done, label="Checking tracker")
+
+    def toggle(self):
+        enable = not getattr(self, "_tracking", False)
+        if not enable and not self.confirm("Turn off screen time", "Stop recording screen time? Your history "
+                                                                  "is kept."):
+            return
+
+        def done(res):
+            ok, msg = res
+            if not ok:
+                messagebox.showerror("Screen time", f"Couldn't {'start' if enable else 'stop'} the tracker:\n{msg}",
+                                     parent=self)
+            self.on_show()
+
+        self.app.bg(lambda: self.backend.set_screentime(enable), done, label="Updating tracker")
+
+    def clear(self):
+        if self.confirm("Clear history", "Delete all recorded screen time? This can't be undone."):
+            self.app.bg(self.backend.clear_screentime, lambda _: self.refresh(), label="Clearing")
+
+    # ------------------------------------------------------------------ navigation
+    def set_period(self, period):
+        import datetime as dt
+
+        self.period, self.anchor = period, dt.date.today()
+        for key, lbl in self.tabs.items():
+            on = key == period
+            lbl.configure(bg=T.ACCENT if on else T.CARD_HI, fg="#ffffff" if on else T.MUTED)
+        self.refresh()
+
+    def move(self, steps):
+        import datetime as dt
+
+        from ..screentime import shift
+
+        new = shift(self.period, self.anchor, steps)
+        if new > dt.date.today():
+            return
+        self.anchor = new
+        self.refresh()
+
+    def refresh(self):
+        period, anchor = self.period, self.anchor
+        self.app.bg(lambda: self.backend.screentime_report(period, anchor), self.render, label="Loading screen time")
+
+    # ------------------------------------------------------------------ rendering
+    def render(self, rep):
+        import datetime as dt
+
+        from ..screentime import fmt_duration
+
+        if rep.period != self.period:
+            return  # a newer request is on its way
+        self.range_lbl.configure(text=rep.label)
+        self.next_btn.set_enabled(rep.end < dt.date.today())
+
+        val, sub = self.tiles["total"]
+        val.configure(text=fmt_duration(rep.total))
+        sub.configure(text=f"{rep.start.strftime('%d %b')} – {rep.end.strftime('%d %b')}" if rep.period != "day"
+                      else rep.start.strftime("%A"))
+        val, sub = self.tiles["avg"]
+        if rep.period == "day":
+            val.configure(text="-")
+            sub.configure(text="see Weekly or Monthly")
+        else:
+            val.configure(text=fmt_duration(rep.daily_average))
+            sub.configure(text=f"over {rep.days_with_data} day{'s' if rep.days_with_data != 1 else ''} with use")
+        val, sub = self.tiles["change"]
+        if rep.previous_total and rep.total:
+            pct = 100 * (rep.total - rep.previous_total) / rep.previous_total
+            val.configure(text=f"{'▲' if pct >= 0 else '▼'} {abs(pct):.0f}%")
+            sub.configure(text=f"{'more' if pct >= 0 else 'less'} than {self.PREV_WORD[rep.period]}")
+        else:
+            val.configure(text="-")
+            sub.configure(text=f"no data for {self.PREV_WORD[rep.period]}")
+        val, sub = self.tiles["top"]
+        if rep.apps:
+            top = rep.apps[0]
+            val.configure(text=top.name if len(top.name) <= 18 else top.name[:17] + "…")
+            sub.configure(text=fmt_duration(top.seconds))
+        else:
+            val.configure(text="-")
+            sub.configure(text="")
+
+        if rep.period == "day":
+            tips = [f"{h}:00 – {h}:59" for h in range(24)]
+            title = "Usage by hour"
+        else:
+            days = [rep.start + dt.timedelta(n) for n in range(len(rep.series))]
+            tips = [d.strftime("%A %d %B") for d in days]
+            title = "Usage by day"
+        self.chart_title.configure(text=title)
+        self.chart.set(rep.series, tips)
+
+        body = self.apps_card.body
+        for w in body.winfo_children():
+            w.destroy()
+        if not rep.apps:
+            tk.Label(body, text="No screen time recorded for this period yet." +
+                     ("" if getattr(self, "_tracking", True) else " Turn tracking on above."),
+                     bg=T.CARD, fg=T.MUTED).pack(anchor="w")
+            return
+        shown = rep.apps[:15]
+        other = sum(a.seconds for a in rep.apps[15:])
+        top_s = shown[0].seconds
+        grid = tk.Frame(body, bg=T.CARD)
+        grid.pack(fill="x")
+        grid.columnconfigure(1, weight=1)
+        rows = [(a.name, a.seconds) for a in shown] + ([("Other apps", other)] if other else [])
+        for r, (name, secs) in enumerate(rows):
+            tk.Label(grid, text=name, bg=T.CARD, fg=T.TEXT, font=T.F_BODY, anchor="w", width=26).grid(
+                row=r, column=0, sticky="w", pady=4)
+            bar = Bar(grid, width=200, height=10)
+            bar.grid(row=r, column=1, sticky="ew", padx=12)
+            bar.set(100 * secs / top_s, T.ACCENT if name != "Other apps" else T.MUTED)
+            tk.Label(grid, text=fmt_duration(secs), bg=T.CARD, fg=T.TEXT, font=(T.FAMILY, 10, "bold"), width=8,
+                     anchor="e").grid(row=r, column=2, sticky="e")
+            tk.Label(grid, text=f"{100 * secs / rep.total:.0f}%", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL, width=5,
+                     anchor="e").grid(row=r, column=3, sticky="e")

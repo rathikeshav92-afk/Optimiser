@@ -119,6 +119,9 @@ TOOLS = [
           "'ms-settings:network-status', 'ms-settings:windowsupdate', 'ms-settings:sound'.",
           {"uri": {"type": "string"}}),
     _tool("create_restore_point", "Create a Windows System Restore point. Takes about a minute."),
+    _tool("get_screen_time", "The user's screen time per app for today, this week (Mon-Sun) or this month, "
+          "with the previous period's total for comparison. Only counts time since tracking was turned on.",
+          {"period": {"type": "string", "enum": ["day", "week", "month"]}}),
 ]
 
 
@@ -486,3 +489,16 @@ class Assistant:
         if code != 0:
             raise RuntimeError("Could not create a restore point (System Protection may be off): " + "\n".join(lines))
         return "Restore point created."
+
+    def _t_get_screen_time(self, period: str) -> str:
+        from .screentime import fmt_duration
+
+        self.notify("Checking your screen time...")
+        rep = self.backend.screentime_report(period)
+        return json.dumps({
+            "period": rep.label, "total": fmt_duration(rep.total),
+            "previous_period_total": fmt_duration(rep.previous_total),
+            "daily_average": fmt_duration(rep.daily_average) if period != "day" else None,
+            "apps": [{"app": a.name, "time": fmt_duration(a.seconds)} for a in rep.apps[:15]],
+            "tracking_on": self.backend.screentime_enabled(),
+        })

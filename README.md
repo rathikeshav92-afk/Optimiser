@@ -12,6 +12,7 @@ and a toolkit of maintenance commands. **Every change it makes is backed up and 
 |---|---|
 | **Dashboard** | Full specs (CPU, GPU + VRAM, RAM speed and sticks, every drive and its type, motherboard, display, Windows build), a **performance rating out of 100** with a per-component breakdown and your weakest part, live CPU/RAM/disk usage, **CPU and GPU temperatures and GPU load**, and **One-Click Boost**. |
 | **AI Assistant** | Chat with Claude (Anthropic's AI) in plain words, for example "my games stutter", "my Wi-Fi keeps dropping" or "turn on night light". It checks your PC with read-only tools and diagnostic commands, then fixes the problem with the app's own optimizations, cleaner, startup manager, Windows commands or registry edits. **It asks your permission before every change** and shows exactly what it will do. Its registry edits are backed up and can be undone in Backup & Restore. It can also open the right Windows Settings page for you. |
+| **Screen Time** | How long you use each app, with **Daily**, **Weekly** and **Monthly** views. Each view shows total time, the daily average, the change from the previous period, your most used app, a chart (by hour for a day, by day for a week or month) and a ranked list of apps. Use the arrows to look back at earlier days, weeks and months. |
 | **Gaming Mode** | Ultimate Performance power plan, Game Mode, background recording (Game DVR) off, hardware-accelerated GPU scheduling, CPU/GPU priority for games (MMCSS), no network throttling, no CPU power throttling, raw mouse input. Lists RAM-heavy background apps so you can close them, and gives driver and in-game setting tips based on your GPU, RAM and monitor. |
 | **Game Profiles** | Add each game's `.exe`. Every game gets **High CPU priority** and the **high-performance GPU**, and you can turn off fullscreen optimizations per game. **Boost & Launch** switches to Gaming Mode, frees RAM, flushes DNS and starts the game as your normal user. |
 | **Balanced Mode** | Switches to the Balanced power plan and puts back your original values for the power-hungry gaming tweaks. Your general speed tweaks stay on. Use it for everyday work and battery life. |
@@ -48,6 +49,17 @@ To build your own `.exe`, double-click **`build_exe.bat`**. The file ends up in 
 
 The assistant uses Claude Opus 5.5. It will not turn off Windows Defender, the firewall, UAC or
 Windows Update, or delete your personal files.
+
+## About Screen Time
+Windows doesn't let other apps read its own usage history, so PC Optimizer records it itself from the
+moment you turn tracking on. Earlier usage can't be shown. A small background tracker starts when you sign in
+(a Task Scheduler task called *PC Optimizer Screen Time*, which runs without a UAC prompt) and checks
+which app is in front every 5 seconds. It uses almost no CPU or RAM.
+- **Counted:** time in the app in front while you're using the PC. Watching a video or playing
+  with a controller still counts, because Windows reports the screen is being kept on.
+- **Not counted:** time when the PC is locked or asleep, or when you've been away for 5+ minutes.
+- **Private:** only app names and minutes are saved, in `%LOCALAPPDATA%\PCOptimizer\screentime.db`.
+  Window titles, websites and typing are never recorded. **Clear history** deletes everything.
 
 ## Recommended first run
 1. **Benchmark → Run benchmark** to record your "before" score.
@@ -99,6 +111,7 @@ pcoptimizer/
   benchmark.py     before/after benchmark
   ai_assistant.py  Claude-powered assistant: tools, approval gate, read-only command detection
   ai_settings.py   API key storage (Windows DPAPI)
+  screentime.py    screen time tracker, storage and daily/weekly/monthly reports
   backend.py       facade used by the UI, plus a demo backend
   ui/              Tkinter interface (theme, widgets, pages)
 ```

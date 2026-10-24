@@ -14,7 +14,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--demo", action="store_true", help="preview the UI with sample data (changes nothing)")
     parser.add_argument("--no-elevate", action="store_true", help="don't ask for administrator rights")
     parser.add_argument("--selftest", metavar="FILE", help=argparse.SUPPRESS)
+    parser.add_argument("--tracker", action="store_true", help="run the background screen time tracker")
     args = parser.parse_args(argv)
+
+    if args.tracker:
+        from .screentime import run_tracker
+
+        return run_tracker()
 
     if args.selftest:
         return selftest(args.selftest)
@@ -49,7 +55,8 @@ def selftest(path: str) -> int:
 
         import anthropic
 
-        for mod in ("ai_assistant", "backend", "benchmark", "games", "sensors", "services", "ui.app", "ui.pages"):
+        for mod in ("ai_assistant", "backend", "benchmark", "games", "screentime", "sensors", "services", "ui.app",
+                    "ui.pages"):
             importlib.import_module(f"pcoptimizer.{mod}")
 
         anthropic.Anthropic(api_key="sk-ant-selftest")
