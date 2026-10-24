@@ -440,6 +440,17 @@ def _privacy_tweaks() -> list[Tweak]:
             recommended=False, needs_restart=True,
             warning="Only if you don't use Copilot.",
         ),
+        Tweak(
+            "memory_integrity_off", "Turn off Memory Integrity (Core Isolation)",
+            "Removes the virtualisation overhead of Memory Integrity, which can cost around 5-10% FPS in some games.",
+            "security",
+            [RegValue(HKLM, r"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity",
+                      "Enabled", 0)],
+            recommended=False, needs_restart=True,
+            warning="Lowers protection against advanced malware that targets drivers. Microsoft lists this as an "
+                    "option for gamers; keep Windows Security on and only install drivers from trusted sources. Some "
+                    "work or school PCs force it back on.",
+        ),
         ScheduledTasksTweak(
             "telemetry_tasks_off", "Turn off background telemetry tasks",
             "Disables the scheduled tasks that collect compatibility, usage and disk diagnostics data in the "

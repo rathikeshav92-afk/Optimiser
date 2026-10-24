@@ -123,6 +123,8 @@ TOOLS = [
     _tool("set_service_running", "Stop or start a Windows service right now (until the next restart). To keep a "
           "service off permanently, use the svc_* ids with apply_optimizations instead.",
           {"name": {"type": "string"}, "running": {"type": "boolean"}, "reason": REASON}),
+    _tool("run_health_check", "Check XMP/EXPO, monitor refresh rate, Resizable BAR, free disk space, SSD vs HDD, "
+          "graphics driver age, temperatures, startup apps, uptime and Memory Integrity. Read-only."),
     _tool("run_one_click_boost", "Run One-Click Boost: any of restore_point, speed, privacy, services, clean, ram, "
           "dns. Applies only the recommended, reversible settings.",
           {"steps": {"type": "array", "items": {"type": "string", "enum": ["restore_point", "speed", "privacy",
@@ -593,3 +595,12 @@ class Assistant:
         res = boost.run(self.backend, {s.id for s in chosen}, lambda m: (lines.append(m), self.notify(m)))
         return json.dumps({"summary": boost.summary(res), "changed": res.applied, "failed": res.failed,
                            "restart_needed": res.needs_restart})
+
+    def _t_run_health_check(self) -> str:
+        from . import health
+
+        self.notify("Running a health check...")
+        if self._specs is None:
+            self._specs = self.backend.specs()
+        findings = health.evaluate(self.backend.health_facts(self._specs))
+        return json.dumps([{"check": f.title, "status": f.status, "detail": f.detail} for f in findings])

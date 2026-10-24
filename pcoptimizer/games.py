@@ -22,6 +22,12 @@ class GameProfile:
     high_priority: bool = True
     high_perf_gpu: bool = True
     disable_fso: bool = False
+    defender_exclusion: bool = False
+    defender_preexisting: bool = False  # the folder was already excluded before we touched it
+
+    @property
+    def folder(self) -> str:
+        return str(PureWindowsPath(self.path).parent)
 
     @property
     def exe(self) -> str:
@@ -77,8 +83,26 @@ class GameLibrary:
         self.mgr.apply(game.tweak_id)
         return game
 
+    # Defender exclusions are a PowerShell setting, not a registry value, so they're handled here.
+    def _ps(self, script: str) -> tuple[int, str]:
+        return self.mgr.runner(f'powershell -NoProfile -NonInteractive -Command "{script}"')
+
+    def _set_exclusion(self, game: GameProfile, on: bool) -> None:
+        folder = game.folder.replace("'", "''")
+        if on:
+            code, out = self._ps(f"(Get-MpPreference).ExclusionPath -contains '{folder}'")
+            game.defender_preexisting = out.strip().lower() == "true"
+            if not game.defender_preexisting:
+                code, out = self._ps(f"Add-MpPreference -ExclusionPath '{folder}' -ErrorAction Stop")
+                if code != 0:
+                    raise RuntimeError(out.strip() or "Couldn't add the Defender exclusion")
+        elif not game.defender_preexisting:
+            self._ps(f"Remove-MpPreference -ExclusionPath '{folder}' -ErrorAction SilentlyContinue")
+
     def update(self, game: GameProfile, **options) -> None:
         """Change a game's options. The old values are restored first so the backup stays the true original."""
+        if "defender_exclusion" in options and options["defender_exclusion"] != game.defender_exclusion:
+            self._set_exclusion(game, options["defender_exclusion"])
         self.mgr.revert(game.tweak_id)
         for k, v in options.items():
             setattr(game, k, v)
@@ -87,6 +111,8 @@ class GameLibrary:
         self.mgr.apply(game.tweak_id)
 
     def remove(self, game: GameProfile) -> None:
+        if game.defender_exclusion:
+            self._set_exclusion(game, False)
         self.mgr.revert(game.tweak_id)
         self.mgr.unregister(game.tweak_id)
         self.games.remove(game)

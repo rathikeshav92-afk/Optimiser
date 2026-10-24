@@ -46,6 +46,10 @@ def setup(root: tk.Tk) -> None:
     style.configure("TCheckbutton", background=CARD, foreground=TEXT, focuscolor=CARD, indicatorbackground=CARD_HI,
                     indicatorforeground=TEXT)
     style.map("TCheckbutton", background=[("active", CARD)], indicatorbackground=[("selected", ACCENT)])
+    style.configure("TRadiobutton", background=CARD, foreground=TEXT, focuscolor=CARD, indicatorbackground=CARD_HI,
+                    indicatorforeground=TEXT)
+    style.map("TRadiobutton", background=[("active", CARD)], foreground=[("active", TEXT)],
+              indicatorbackground=[("selected", ACCENT)])
     style.configure("Vertical.TScrollbar", background=CARD_HI, troughcolor=BG, arrowcolor=MUTED, bordercolor=BG,
                     lightcolor=CARD_HI, darkcolor=CARD_HI)
     style.configure("Horizontal.TProgressbar", background=ACCENT, troughcolor=CARD_HI, bordercolor=CARD,

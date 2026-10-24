@@ -12,6 +12,7 @@ from .. import benchmark, boost, profiles
 from ..cleaner import human
 from ..commands import COMMANDS
 from ..drivers import OLD_DRIVER_YEARS
+from ..network import PROVIDERS, current_provider
 from ..system_info import gb
 from . import theme as T
 from .widgets import Bar, Button, Card, LogBox, ScoreGauge, ScrollFrame, ToggleRow
@@ -159,6 +160,8 @@ class DashboardPage(Page):
         self.boost_btn = Button(row, "⚡  One-Click Boost", self.one_click_boost)
         self.boost_btn.pack(side="left", padx=(0, 10))
         Button(row, "▶  Gaming Mode", lambda: self.app.show("gaming"), color=T.GAMING).pack(side="left", padx=(0, 10))
+        Button(row, "\u271A  Health Check", lambda: self.app.show("health"), color=T.CARD_HI).pack(side="left",
+                                                                                                   padx=(0, 10))
         Button(row, "♲  Clean junk", lambda: self.app.show("cleaner"), color=T.CARD_HI).pack(side="left", padx=(0, 10))
         self.ram_btn = Button(row, "Free up RAM", self.free_ram, color=T.CARD_HI)
         self.ram_btn.pack(side="left")
@@ -558,6 +561,37 @@ class TweaksPage(Page):
         Button(prow, "Undo selected", lambda: self.undo(self.privacy), color=T.CARD_HI).pack(side="left", padx=8)
         self.privacy = TweakList(self, pc.body, self.backend.tweaks.in_category("privacy"))
 
+        sc = self.card("Optional security trade-offs", "More FPS in exchange for less protection. Never applied by "
+                                                       "One-Click Boost - only if you choose to here.")
+        srow = tk.Frame(sc.body, bg=T.CARD)
+        srow.pack(fill="x", pady=(0, 14))
+        Button(srow, "Apply selected", lambda: self.apply(self.security), color=T.WARN).pack(side="left")
+        Button(srow, "Undo selected", lambda: self.undo(self.security), color=T.CARD_HI).pack(side="left", padx=8)
+        self.security = TweakList(self, sc.body, self.backend.tweaks.in_category("security"))
+        tk.Label(sc.body, text="Antivirus exclusions for game folders are set per game on the Game Profiles page.",
+                 bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).pack(anchor="w", pady=(10, 0))
+
+        dns = self.card("Fast DNS", "DNS turns website names into addresses. A faster DNS makes websites and "
+                                    "launchers start loading sooner (it doesn't change in-game ping).")
+        self.dns_status = tk.Label(dns.body, text="Checking...", bg=T.CARD, fg=T.TEXT, font=(T.FAMILY, 10, "bold"))
+        self.dns_status.pack(anchor="w")
+        self.dns_choice = tk.StringVar(value="cloudflare")
+        self.dns_rows = {}
+        for key, (label, servers) in PROVIDERS.items():
+            r = tk.Frame(dns.body, bg=T.CARD)
+            r.pack(fill="x", pady=2)
+            ttk.Radiobutton(r, text=f"  {label}" + (f"   ({', '.join(servers)})" if servers else ""),
+                            value=key, variable=self.dns_choice).pack(side="left")
+            ms = tk.Label(r, text="", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL)
+            ms.pack(side="right")
+            self.dns_rows[key] = ms
+        drow = tk.Frame(dns.body, bg=T.CARD)
+        drow.pack(fill="x", pady=(10, 0))
+        Button(drow, "Use selected DNS", self.apply_dns, small=True).pack(side="left")
+        self.dns_test_btn = Button(drow, "Test speed", self.test_dns, color=T.CARD_HI, small=True)
+        self.dns_test_btn.pack(side="left", padx=8)
+        self._adapters = []
+
         s = self.card("Startup apps", "Apps that launch with Windows slow down boot. Disabling works exactly like "
                                       "Task Manager - nothing is deleted.")
         self.st_tree = ttk.Treeview(s.body, columns=("name", "status", "cmd"), show="headings", height=7)
@@ -575,7 +609,60 @@ class TweaksPage(Page):
     def on_show(self):
         self.list.refresh()
         self.privacy.refresh()
+        self.security.refresh()
         self.load_startup()
+        self.load_dns()
+
+    # ------------------------------------------------------------------ DNS
+    def load_dns(self):
+        def done(adapters):
+            self._adapters = adapters
+            if not adapters:
+                self.dns_status.configure(text="No connected network adapter found.", fg=T.MUTED)
+                return
+            cur = current_provider(adapters)
+            name = PROVIDERS[cur][0] if cur in PROVIDERS else "Custom servers"
+            self.dns_status.configure(text=f"Now using: {name}  \u2022  {', '.join(a.name for a in adapters)}",
+                                      fg=T.TEXT)
+            if cur in PROVIDERS:
+                self.dns_choice.set(cur)
+
+        self.app.bg(self.backend.dns_adapters, done, label="Reading network settings")
+
+    def apply_dns(self):
+        choice = self.dns_choice.get()
+        if not self._adapters:
+            return
+        log = self.app.logger(self.log)
+
+        def work():
+            for line in self.backend.set_dns(choice, self._adapters):
+                log(line)
+
+        self.app.bg(work, lambda _: self.load_dns(), label="Changing DNS")
+
+    def test_dns(self):
+        self.dns_test_btn.set_enabled(False)
+        for lbl in self.dns_rows.values():
+            lbl.configure(text="testing...", fg=T.MUTED)
+
+        def work():
+            results = {}
+            for key, (_, servers) in PROVIDERS.items():
+                results[key] = self.backend.measure_dns(servers)
+                self.app.ui(lambda k=key, v=results[key]: self.dns_rows[k].configure(
+                    text=f"{v:.0f} ms" if v is not None else "no answer", fg=T.TEXT))
+            return results
+
+        def done(results):
+            self.dns_test_btn.set_enabled(True)
+            valid = {k: v for k, v in results.items() if v is not None}
+            if valid:
+                best = min(valid, key=valid.get)
+                self.dns_rows[best].configure(text=f"{valid[best]:.0f} ms  \u2714 fastest", fg=T.GOOD)
+                self.dns_choice.set(best)
+
+        self.app.bg(work, done, label="Testing DNS speed")
 
     def recommended(self):
         for t in self.list.tweaks:
@@ -937,6 +1024,9 @@ class GamesPage(Page):
          "Forces the game onto your dedicated graphics card (Settings → Display → Graphics)."),
         ("disable_fso", "Disable fullscreen optimizations",
          "Uses true exclusive fullscreen. Can lower input lag in older DirectX 9-11 games, but test it per game."),
+        ("defender_exclusion", "Skip Defender scans (optional)",
+         "Excludes the game's folder from real-time antivirus scanning so loading and shader compiling stutter "
+         "less. A small security trade-off - only use it for games from Steam, Epic, Xbox or other trusted stores."),
     ]
 
     def build(self):
@@ -948,7 +1038,19 @@ class GamesPage(Page):
         row.pack(fill="x")
         Button(row, "+  Add game (.exe)", self.add_game, color=T.GAMING).pack(side="left")
         self.auto_gaming = tk.BooleanVar(value=True)
-        ttk.Checkbutton(row, text="  Switch to Gaming Mode when launching", variable=self.auto_gaming).pack(side="right")
+        ttk.Checkbutton(row, text="  Boost & Launch switches to Gaming Mode", variable=self.auto_gaming).pack(side="right")
+
+        auto = self.card("Auto Gaming Mode", "Switches to Gaming Mode by itself whenever one of your games is running "
+                                             "- however you start it (Steam, desktop shortcut...) - and puts your "
+                                             "settings back about 30 seconds after you close it. Runs in the "
+                                             "background helper, even when this app is closed.")
+        arow = tk.Frame(auto.body, bg=T.CARD)
+        arow.pack(fill="x")
+        self.auto_status = tk.Label(arow, text="Checking...", bg=T.CARD, fg=T.MUTED, font=(T.FAMILY, 10, "bold"))
+        self.auto_status.pack(side="left")
+        self.auto_btn = Button(arow, "Turn on", self.toggle_auto, color=T.GAMING, small=True)
+        self.auto_btn.pack(side="right")
+        self._auto_on = False
 
         self.list_card = self.card("Your games")
         legend = self.card("What the options do")
@@ -978,10 +1080,11 @@ class GamesPage(Page):
                      justify="left").pack(anchor="w")
             opts = tk.Frame(info, bg=T.CARD)
             opts.pack(anchor="w", pady=(6, 0))
-            for key, title, _ in self.OPTIONS:
+            for n, (key, title, _) in enumerate(self.OPTIONS):
                 var = tk.BooleanVar(value=getattr(game, key))
                 ttk.Checkbutton(opts, text=" " + title, variable=var,
-                                command=lambda g=game, k=key, v=var: self.set_option(g, k, v.get())).pack(side="left", padx=(0, 14))
+                                command=lambda g=game, k=key, v=var: self.set_option(g, k, v)).grid(
+                    row=n // 2, column=n % 2, sticky="w", padx=(0, 18), pady=1)
             Button(row, "Remove", lambda g=game: self.remove(g), color=T.CARD_HI, small=True).pack(side="right", padx=(8, 0))
             Button(row, "⚡ Boost & Launch", lambda g=game: self.launch(g), color=T.GAMING, small=True).pack(side="right")
 
@@ -1002,7 +1105,36 @@ class GamesPage(Page):
         self.app.bg(work, lambda _: self.render(), error=lambda e: self.log.write(f"[FAILED] {e}"),
                     label="Adding game")
 
-    def set_option(self, game, key, value):
+    def on_show(self):
+        def done(on):
+            self._auto_on = on
+            self.auto_status.configure(text="\u25CF On - watching for your games" if on else "\u25CB Off",
+                                       fg=T.GAMING if on else T.MUTED)
+            self.auto_btn.configure(text="Turn off" if on else "Turn on")
+
+        self.app.bg(self.backend.auto_gaming_enabled, done, label="Checking Auto Gaming Mode")
+
+    def toggle_auto(self):
+        enable = not self._auto_on
+        if enable and not self.backend.games.games:
+            self.log.write("[FAILED] Add at least one game first - Auto Gaming Mode watches for your games.")
+            return
+
+        def done(res):
+            ok, msg = res
+            self.log.write(f"[OK] Auto Gaming Mode {'on' if enable else 'off'}" if ok else f"[FAILED] {msg}")
+            self.on_show()
+
+        self.app.bg(lambda: self.backend.set_auto_gaming(enable), done, label="Updating Auto Gaming Mode")
+
+    def set_option(self, game, key, var):
+        value = var.get()
+        if key == "defender_exclusion" and value and not self.confirm(
+                "Skip Defender scans", f"Exclude this folder from Windows Defender's real-time scanning?\n\n"
+                f"{game.folder}\n\nOnly do this for games from trusted stores. Untick it (or remove the game) to "
+                "turn scanning back on."):
+            var.set(False)
+            return
         log = self.app.logger(self.log)
 
         def work():
@@ -2280,3 +2412,103 @@ class RegistryPage(Page):
         name = self._selected()
         if name is not None:
             self._apply("delete", name, summary=f"Delete {name or '(Default)'}")
+
+
+# =============================================================================== Health check
+
+
+class HealthPage(Page):
+    STYLE = {"bad": ("✖", "PROBLEM", T.BAD), "warn": ("⚠", "IMPROVE", T.WARN),
+             "info": ("ℹ", "INFO", T.ACCENT), "ok": ("✔", "GOOD", T.GOOD)}
+
+    def build(self):
+        self.header("Health Check", "Finds the settings and conditions that cost your PC the most performance - "
+                                    "many of them outside Windows, like your BIOS and monitor.", T.GOOD)
+        top = self.card()
+        row = tk.Frame(top.body, bg=T.CARD)
+        row.pack(fill="x")
+        self.summary = tk.Label(row, text="Not checked yet", bg=T.CARD, fg=T.TEXT, font=T.F_H2)
+        self.summary.pack(side="left")
+        self.check_btn = Button(row, "↻  Run health check", self.run_check)
+        self.check_btn.pack(side="right")
+        self.list_card = self.card("Results")
+        self.log = self.log_card(height=6)
+        self._checked = False
+
+    def on_show(self):
+        if not self._checked and self.app.specs is not None:
+            self.run_check()
+
+    def run_check(self):
+        from ..health import evaluate
+
+        specs = self.app.specs
+        if specs is None:
+            self.summary.configure(text="Still reading your hardware - try again in a moment.")
+            return
+        self._checked = True
+        self.check_btn.set_enabled(False)
+        self.summary.configure(text="Checking...", fg=T.MUTED)
+        self.app.bg(lambda: evaluate(self.backend.health_facts(specs)), self.render,
+                    error=lambda e: (self.check_btn.set_enabled(True), self.log.write(f"[FAILED] {e}")),
+                    label="Running health check")
+
+    def render(self, findings):
+        from ..health import score
+
+        self.check_btn.set_enabled(True)
+        bad, warn = score(findings)
+        if bad or warn:
+            parts = [f"{bad} problem{'s' if bad != 1 else ''}" if bad else "",
+                     f"{warn} thing{'s' if warn != 1 else ''} to improve" if warn else ""]
+            self.summary.configure(text=" and ".join(p for p in parts if p) + " found",
+                                   fg=T.BAD if bad else T.WARN)
+        else:
+            self.summary.configure(text="✔ Everything looks good", fg=T.GOOD)
+        body = self.list_card.body
+        for w in body.winfo_children():
+            w.destroy()
+        for i, f in enumerate(findings):
+            if i:
+                tk.Frame(body, bg=T.BORDER, height=1).pack(fill="x", pady=8)
+            icon, tag, color = self.STYLE[f.status]
+            row = tk.Frame(body, bg=T.CARD)
+            row.pack(fill="x")
+            txt = tk.Frame(row, bg=T.CARD)
+            txt.pack(side="left", fill="x", expand=True)
+            head = tk.Frame(txt, bg=T.CARD)
+            head.pack(anchor="w")
+            tk.Label(head, text=f"{icon}  {f.title}", bg=T.CARD, fg=T.TEXT, font=(T.FAMILY, 10, "bold")).pack(side="left")
+            tk.Label(head, text=f" {tag} ", bg=T.CARD_HI, fg=color, font=(T.FAMILY, 8, "bold")).pack(side="left", padx=8)
+            tk.Label(txt, text=f.detail, bg=T.CARD, fg=T.MUTED, font=T.F_SMALL, wraplength=640,
+                     justify="left").pack(anchor="w", pady=(2, 0))
+            if f.fix:
+                Button(row, f.fix_label, lambda f=f: self.fix(f), small=True,
+                       color=T.ACCENT if f.status in ("bad", "warn") else T.CARD_HI).pack(side="right", padx=(12, 0))
+
+    def fix(self, f):
+        action = f.fix
+        if action.startswith("page:"):
+            self.app.show(action[5:])
+        elif action.startswith("refresh:"):
+            device, hz = action[len("refresh:"):].rsplit(":", 1)
+
+            def done(res):
+                ok, msg = res
+                self.log.write(f"[OK] Monitor switched to {hz} Hz" if ok else f"[FAILED] {msg}")
+                self.run_check()
+
+            self.app.bg(lambda: self.backend.set_refresh_rate(device, int(hz)), done, label="Changing refresh rate")
+        elif action == "bios":
+            if self.confirm("Restart into BIOS", "Your PC will restart straight into the BIOS/UEFI setup in 5 "
+                                                 "seconds. Save your work first.\n\nLook for 'XMP', 'EXPO' or "
+                                                 "'DOCP' (memory) and 'Re-Size BAR' / 'Above 4G Decoding' "
+                                                 "(often under Advanced or AI Tweaker). Save and exit with F10."):
+                code = self.backend.restart_to_bios()
+                self.log.write("> Restarting into BIOS..." if code == 0 else
+                               "[FAILED] This PC can't restart straight into the BIOS. Restart and press Del or F2 "
+                               "while it starts.")
+        elif action == "restart":
+            if self.confirm("Restart", "Restart your PC in 10 seconds? Save your work first."):
+                self.backend.restart_pc()
+                self.log.write("> Restarting in 10 seconds (run 'shutdown /a' to cancel)")

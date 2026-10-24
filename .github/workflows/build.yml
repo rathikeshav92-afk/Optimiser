@@ -59,6 +59,18 @@ jobs:
           name: system-smoke
           path: system-smoke.txt
           if-no-files-found: ignore
+      - name: Smoke-test health, auto gaming, DNS and Defender
+        shell: pwsh
+        run: |
+          python ci/features_smoke.py *>&1 | Tee-Object -FilePath features-smoke.txt
+          exit $LASTEXITCODE
+      - name: Upload features smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: features-smoke
+          path: features-smoke.txt
+          if-no-files-found: ignore
       - name: Build PCOptimizer.exe
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --uac-admin --collect-submodules anthropic --name PCOptimizer launcher.py
       - name: Self-test the built exe

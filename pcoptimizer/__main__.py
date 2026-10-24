@@ -18,9 +18,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.tracker:
-        from .screentime import run_tracker
+        from .background import run
 
-        return run_tracker()
+        return run()
 
     if args.selftest:
         return selftest(args.selftest)
@@ -55,7 +55,7 @@ def selftest(path: str) -> int:
 
         import anthropic
 
-        for mod in ("ai_assistant", "backend", "benchmark", "boost", "commands", "drivers", "regedit", "games", "screentime", "sensors", "services", "ui.app",
+        for mod in ("ai_assistant", "backend", "background", "benchmark", "boost", "commands", "display", "health", "network", "drivers", "regedit", "games", "screentime", "sensors", "services", "ui.app",
                     "ui.pages"):
             importlib.import_module(f"pcoptimizer.{mod}")
 

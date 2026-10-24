@@ -43,7 +43,8 @@ $sys = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$env:SystemDrive'"
     MaxClock=$cpu.MaxClockSpeed;
     Manufacturer=$cs.Manufacturer; Model=$cs.Model; TotalRam=[int64]$cs.TotalPhysicalMemory;
     RamSpeed=($mem | Measure-Object -Property ConfiguredClockSpeed -Maximum).Maximum;
-    RamSticks=@($mem).Count;
+    RamSticks=@($mem).Count; RamRated=($mem | Measure-Object -Property Speed -Maximum).Maximum;
+    RamType=[int](@($mem)[0].SMBIOSMemoryType);
     OsName=$os.Caption; OsVersion=$os.Version; OsBuild=$os.BuildNumber; LastBoot=$os.LastBootUpTime.ToString('yyyy-MM-dd HH:mm');
     Board=(($bb.Manufacturer + ' ' + $bb.Product).Trim());
     Gpus=@($gpus); Disks=@($disks);
@@ -90,6 +91,8 @@ class SystemSpecs:
     total_ram_bytes: int = 0
     ram_speed_mhz: int = 0
     ram_sticks: int = 0
+    ram_rated_mhz: int = 0  # what the module reports as its speed (often the JEDEC default, not XMP)
+    ram_type: str = ""  # DDR4 / DDR5 / ...
     manufacturer: str = ""
     model: str = ""
     motherboard: str = ""
@@ -163,6 +166,9 @@ def collect_specs() -> SystemSpecs:
         total_ram_bytes=int(data.get("TotalRam") or 0),
         ram_speed_mhz=int(data.get("RamSpeed") or 0),
         ram_sticks=int(data.get("RamSticks") or 0),
+        ram_rated_mhz=int(data.get("RamRated") or 0),
+        ram_type={20: "DDR", 21: "DDR2", 24: "DDR3", 26: "DDR4", 34: "DDR5", 35: "LPDDR5"}.get(
+            int(data.get("RamType") or 0), ""),
         manufacturer=data.get("Manufacturer") or "",
         model=data.get("Model") or "",
         motherboard=data.get("Board") or "",
@@ -199,8 +205,10 @@ def demo_specs() -> SystemSpecs:
         threads=16,
         max_clock_mhz=3801,
         total_ram_bytes=16 * 1024 ** 3,
-        ram_speed_mhz=3200,
+        ram_speed_mhz=2133,
         ram_sticks=2,
+        ram_rated_mhz=2133,
+        ram_type="DDR4",
         manufacturer="Custom",
         model="Desktop PC",
         motherboard="ASUSTeK TUF GAMING B550-PLUS",

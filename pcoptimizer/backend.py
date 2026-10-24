@@ -92,10 +92,74 @@ class Backend:
         return screentime.report(period, anchor)
 
     def screentime_enabled(self) -> bool:
-        return screentime.autostart_enabled()
+        from . import settings
+
+        return bool(settings.load()["screentime"]) and screentime.autostart_enabled()
 
     def set_screentime(self, enabled: bool) -> tuple[bool, str]:
-        return screentime.enable_autostart() if enabled else screentime.disable_autostart()
+        from . import background, settings
+
+        return background.sync_task(settings.save({"screentime": enabled}))
+
+    def auto_gaming_enabled(self) -> bool:
+        from . import settings
+
+        return bool(settings.load()["auto_gaming"]) and screentime.autostart_enabled()
+
+    def set_auto_gaming(self, enabled: bool) -> tuple[bool, str]:
+        from . import background, settings
+
+        return background.sync_task(settings.save({"auto_gaming": enabled}))
+
+    # health / display / dns
+    def monitors(self):
+        from . import display
+
+        return display.monitors()
+
+    def set_refresh_rate(self, device: str, hz: int):
+        from . import display
+
+        return display.set_refresh_rate(device, hz)
+
+    def health_facts(self, specs):
+        from . import health
+
+        gpu = specs.primary_gpu
+        installed = self.installed_drivers()
+        gpu_drv = next((d for d in installed if gpu and d.device == gpu.name), None)
+        disk = specs.system_disk
+        temps = self.temps()
+        return health.Facts(
+            ram_speed=specs.ram_speed_mhz, ram_rated=specs.ram_rated_mhz, ram_type=specs.ram_type,
+            ram_sticks=specs.ram_sticks, ram_gb=specs.total_ram_bytes / 1024 ** 3, monitors=self.monitors(),
+            disk_free=self.disk_free(), disk_size=specs.sys_drive_size, disk_kind=disk.kind if disk else "",
+            gpu_name=gpu.name if gpu else "", gpu_driver_date=gpu_drv.date if gpu_drv else "",
+            cpu_temp=temps.cpu_temp, gpu_temp=temps.gpu_temp,
+            startup_enabled=sum(a.enabled for a in self.startup_apps()), last_boot=specs.last_boot,
+            hvci_running=health.hvci_running(), rebar=health.rebar_enabled(gpu.name if gpu else ""))
+
+    def restart_to_bios(self):
+        return self.run_command('shutdown /r /fw /t 5 /c "PC Optimizer: restarting into BIOS/UEFI setup"',
+                                lambda _l: None)
+
+    def restart_pc(self):
+        return self.run_command('shutdown /r /t 10 /c "PC Optimizer: restarting"', lambda _l: None)
+
+    def dns_adapters(self):
+        from . import network
+
+        return network.list_adapters()
+
+    def set_dns(self, provider: str, adapters):
+        from . import network
+
+        return network.set_provider(provider, adapters)
+
+    def measure_dns(self, servers):
+        from . import network
+
+        return network.measure(servers)
 
     def clear_screentime(self) -> None:
         screentime.clear()
@@ -174,6 +238,15 @@ class _DemoRunner:
             if guid.group(1) not in self.plans:
                 return 1, "Invalid parameters"
             self.active = guid.group(1)
+        if "MpPreference" in cmd:
+            import re as _re
+
+            folder = _re.search(r"'((?:[^']|'')*)'", cmd).group(1).replace("''", "'")
+            excl = getattr(self, "exclusions", set())
+            if "Get-MpPreference" in cmd:
+                return 0, str(folder in excl)
+            self.exclusions = (excl | {folder}) if "Add-" in cmd else (excl - {folder})
+            return 0, ""
         if cmd.startswith("schtasks"):
             import re as _re
 
@@ -294,6 +367,58 @@ class DemoBackend(Backend):
     def set_screentime(self, enabled):
         self._st_on = enabled
         return True, ""
+
+    def auto_gaming_enabled(self):
+        return getattr(self, "_auto_on", False)
+
+    def set_auto_gaming(self, enabled):
+        self._auto_on = enabled
+        return True, ""
+
+    def monitors(self):
+        from .display import Monitor
+
+        hz = getattr(self, "_hz", 60)
+        return [Monitor("\\\\.\\DISPLAY1", "NVIDIA GeForce RTX 3060", 1920, 1080, hz, 144)]
+
+    def set_refresh_rate(self, device, hz):
+        self._hz = hz
+        return True, ""
+
+    def health_facts(self, specs):
+        import datetime as dt
+
+        from . import health
+
+        return health.Facts(
+            ram_speed=specs.ram_speed_mhz, ram_rated=specs.ram_rated_mhz, ram_type=specs.ram_type,
+            ram_sticks=specs.ram_sticks, ram_gb=specs.total_ram_bytes / 1024 ** 3, monitors=self.monitors(),
+            disk_free=self.disk_free(), disk_size=specs.sys_drive_size, disk_kind="NVMe SSD",
+            gpu_name=specs.primary_gpu.name, gpu_driver_date="2024-09-19", cpu_temp=48.0, gpu_temp=42.0,
+            startup_enabled=4, last_boot=(dt.datetime.now() - dt.timedelta(days=9)).strftime("%Y-%m-%d %H:%M"),
+            hvci_running=True, rebar=False)
+
+    def restart_to_bios(self):
+        return 0
+
+    def restart_pc(self):
+        return 0
+
+    def dns_adapters(self):
+        from .network import PROVIDERS, Adapter
+
+        static = PROVIDERS.get(getattr(self, "_dns", "auto"))[1]
+        return [Adapter(12, "Ethernet", "Realtek PCIe 2.5GbE Family Controller", static or ["192.168.1.1"], static)]
+
+    def set_dns(self, provider, adapters):
+        from .network import PROVIDERS
+
+        self._dns = provider
+        return [f"[OK] {a.name}: {PROVIDERS[provider][0]}" for a in adapters]
+
+    def measure_dns(self, servers):
+        time.sleep(0.3)
+        return {"1.1.1.1": 11.8, "8.8.8.8": 17.2, "9.9.9.9": 23.5}.get(servers[0] if servers else "", 31.4)
 
     def clear_screentime(self):
         screentime.clear(self._screentime_db())
