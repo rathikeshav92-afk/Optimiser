@@ -24,9 +24,17 @@ jobs:
           python -c "import time; from pcoptimizer.sensors import SensorMonitor; m = SensorMonitor(); m.start(); time.sleep(12); print(m.latest); m.stop(); assert m._proc is not None"
           python -c "from pcoptimizer import benchmark; r = benchmark.run(lambda m, p: print(m)); print(r); assert r.score > 0"
       - name: Smoke-test screen time tracker
+        shell: pwsh
         run: |
-          python -c "import sys; from pcoptimizer import screentime as st; d = st._file_description(sys.executable); print('desc:', d); assert d; print('fg:', st.foreground_app()); print('idle:', st.idle_seconds()); print('watching:', st._display_required())"
-          python -c "from pcoptimizer import screentime as st; ok, msg = st.enable_autostart(); print(ok, msg); assert ok, msg; assert st.autostart_enabled(); ok, msg = st.disable_autostart(); assert ok, msg; assert not st.autostart_enabled(); print('autostart register/unregister ok')"
+          python ci/screentime_smoke.py *>&1 | Tee-Object -FilePath screentime-smoke.txt
+          exit $LASTEXITCODE
+      - name: Upload screen time smoke report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screentime-smoke
+          path: screentime-smoke.txt
+          if-no-files-found: ignore
       - name: Build PCOptimizer.exe
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --uac-admin --collect-submodules anthropic --name PCOptimizer launcher.py
       - name: Self-test the built exe

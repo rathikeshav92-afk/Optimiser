@@ -207,20 +207,46 @@ def _file_description(path: str) -> str:
     return ""
 
 
+def _win32():
+    """user32/kernel32 with 64-bit-safe handle types (cached)."""
+    global _WIN32
+    if _WIN32 is None:
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+                                                        ctypes.POINTER(wintypes.DWORD)]
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CreateMutexW.restype = wintypes.HANDLE
+        kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        _WIN32 = user32, kernel32
+    return _WIN32
+
+
+_WIN32 = None
+
+
 def foreground_app() -> tuple[str, str] | None:
     """(exe file name, full path) of the app in front, or None."""
-    user32, kernel32 = ctypes.windll.user32, ctypes.windll.kernel32
+    from ctypes import wintypes
+
+    user32, kernel32 = _win32()
     hwnd = user32.GetForegroundWindow()
     if not hwnd:
         return None
-    pid = ctypes.c_ulong()
+    pid = wintypes.DWORD()
     user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
     handle = kernel32.OpenProcess(0x1000, False, pid.value)  # PROCESS_QUERY_LIMITED_INFORMATION
     if not handle:
         return None
     try:
         buf = ctypes.create_unicode_buffer(1024)
-        size = ctypes.c_ulong(len(buf))
+        size = wintypes.DWORD(len(buf))
         if not kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
             return None
         return PureWindowsPath(buf.value).name, buf.value
@@ -310,9 +336,10 @@ def run_tracker() -> int:
     if not IS_WINDOWS:
         print("The screen time tracker only runs on Windows.")
         return 1
-    kernel32 = ctypes.windll.kernel32
+    _, kernel32 = _win32()
     mutex = kernel32.CreateMutexW(None, False, MUTEX_NAME)
-    if kernel32.GetLastError() == 183:  # ERROR_ALREADY_EXISTS
+    if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS: another tracker is running
+        kernel32.CloseHandle(mutex)
         return 0
     tracker = Tracker(connect())
     try:
