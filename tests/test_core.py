@@ -201,3 +201,17 @@ def test_startup_disable_enable():
 def test_protected_processes_cannot_be_ended():
     ok, msg = processes.end_process("csrss.exe")
     assert not ok and "protected" in msg
+
+
+def test_powershell_json_keeps_pipe_on_last_line(monkeypatch):
+    from pcoptimizer import platform_utils
+
+    seen = {}
+
+    def fake(script, timeout=None):
+        seen["script"] = script
+        return platform_utils.subprocess.CompletedProcess([], 0, "[1]", "")
+
+    monkeypatch.setattr(platform_utils, "powershell", fake)
+    assert platform_utils.powershell_json("Get-X | ForEach-Object {\n  1\n}\n") == [1]
+    assert "\n|" not in seen["script"].replace(" ", "")

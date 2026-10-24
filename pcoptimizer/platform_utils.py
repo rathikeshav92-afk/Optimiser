@@ -83,7 +83,9 @@ def powershell(script: str, timeout: float | None = 120) -> subprocess.Completed
 
 def powershell_json(script: str, timeout: float | None = 120):
     """Run a PowerShell snippet whose output is piped to ConvertTo-Json and parse it."""
-    result = powershell(f"{script} | ConvertTo-Json -Depth 4 -Compress", timeout=timeout)
+    # rstrip: Windows PowerShell 5.1 rejects a line that starts with "|" ("empty pipe element"),
+    # so the pipe must go on the script's last line, not on a new one.
+    result = powershell(f"{script.rstrip()} | ConvertTo-Json -Depth 4 -Compress", timeout=timeout)
     # A non-zero exit code can just mean one item in the pipeline errored (e.g. a service Windows won't
     # describe); the JSON for everything else is still valid, so use it when it parses.
     if not result.stdout.strip():

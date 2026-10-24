@@ -83,7 +83,8 @@ def registry_roundtrip():
 
 def service_control():
     running = services.running_services()
-    assert running and any(s.protected for s in running)
+    assert running, "no running services returned"
+    assert any(s.protected for s in running), [s.name for s in running][:20]
     target = "Spooler"
     ok, msg = services.set_running(target, False)
     assert ok, msg
@@ -93,6 +94,15 @@ def service_control():
     return f"{len(running)} running, {sum(s.protected for s in running)} protected; stop/start {target} ok"
 
 
+def powershell_json_multiline():
+    from pcoptimizer.platform_utils import powershell_json
+
+    data = powershell_json("Get-Service | Select-Object -First 3 | ForEach-Object {\n  [pscustomobject]@{ N = $_.Name }\n}\n")
+    assert data and len(data) == 3, data
+    return "ok"
+
+
+check("multi-line powershell_json", powershell_json_multiline)
 check("PowerShell scripts parse", scripts_parse)
 check("safe commands run", run_safe_commands)
 check("registry editor round trip", registry_roundtrip)

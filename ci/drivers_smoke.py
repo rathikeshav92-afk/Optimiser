@@ -30,6 +30,8 @@ def installed():
     total = powershell("@(Get-CimInstance Win32_PnPSignedDriver | Where-Object DeviceName).Count")
     assert total.returncode == 0 and int(total.stdout.strip() or 0) > 0, total.stdout + total.stderr
     ds = drivers.installed_drivers()
+    raw = drivers.powershell_json(drivers.INSTALLED_SCRIPT.replace("-notmatch", "-match"))  # Microsoft ones
+    assert raw, "driver inventory query returned nothing"
     oldest = f", oldest: {ds[0].device} {ds[0].date}" if ds else ""
     return f"{total.stdout.strip()} drivers in total, {len(ds)} from hardware makers{oldest}"
 
