@@ -7,7 +7,6 @@ reversible tweaks, so they show up (and can be undone) in Backup & Restore.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import threading
@@ -45,8 +44,10 @@ over raw commands: they are tested and can be undone in Backup & Restore.
 another option.
 - When the user only wants to see a setting, or would rather change it themselves, open the right Windows \
 Settings page with open_windows_settings.
-- Before a risky change (registry edits outside the built-in tweaks, network resets, driver or system \
-repairs), create a restore point first.
+- Never change the Windows registry directly (no reg add/delete/import, regedit or registry cmdlets): \
+registry editing is turned off in this app. Use the built-in tweaks, which are tested and undoable, or \
+Windows Settings instead.
+- Before a risky change (network resets, driver or system repairs), create a restore point first.
 - Never turn off Windows Defender, the firewall, SmartScreen, UAC or Windows Update. Never delete the \
 user's personal files. Never run scripts downloaded from the internet. If asked to do one of these, explain \
 the risk and suggest a safer alternative.
@@ -109,15 +110,6 @@ TOOLS = [
     _tool("read_registry_value", "Read one registry value.",
           {"hive": {"type": "string", "enum": ["HKCU", "HKLM"]}, "key": {"type": "string"},
            "name": {"type": "string"}}),
-    _tool("set_registry_value",
-          "Set one registry value. The original is backed up and can be undone in Backup & Restore. "
-          "For DWORD/QWORD pass the number as a decimal string.",
-          {"hive": {"type": "string", "enum": ["HKCU", "HKLM"]}, "key": {"type": "string"},
-           "name": {"type": "string"}, "value_type": {"type": "string", "enum": ["DWORD", "QWORD", "SZ", "EXPAND_SZ"]},
-           "value": {"type": "string"}, "reason": REASON}),
-    _tool("delete_registry_value", "Delete one registry value. Backed up first; undoable in Backup & Restore.",
-          {"hive": {"type": "string", "enum": ["HKCU", "HKLM"]}, "key": {"type": "string"},
-           "name": {"type": "string"}, "reason": REASON}),
     _tool("list_running_services", "Every running Windows service with its start type, and whether it is "
           "protected (needed by Windows, can't be stopped)."),
     _tool("set_service_running", "Stop or start a Windows service right now (until the next restart). To keep a "
@@ -188,7 +180,19 @@ def is_read_only(command: str, shell: str) -> bool:
     return all(w.lower().startswith("get-") or w.lower() in _PS_SAFE_CMDLETS for w in words)
 
 
+_REG_TOOL = re.compile(r"\b(reg(\.exe)?\s+(add|delete|import|restore|load|unload|copy)|regedit|regedt32|regini)\b",
+                       re.I)
+_REG_PATH = re.compile(r"\b(HK(LM|CU|CR|U|CC)|HKEY_[A-Z_]+)\b|Registry::", re.I)
+_PS_WRITE = re.compile(r"\b(Set|New|Remove|Rename|Clear|Copy|Move)-Item(Property)?\b", re.I)
+
+
+def edits_registry(command: str) -> bool:
+    """True for commands that would change the registry (registry editing is turned off for the assistant)."""
+    return bool(_REG_TOOL.search(command) or (_PS_WRITE.search(command) and _REG_PATH.search(command)))
+
+
 # --------------------------------------------------------------------------- AI registry changes
+# The assistant can no longer make these; the log stays so earlier changes remain undoable.
 
 
 @dataclass
@@ -468,6 +472,9 @@ class Assistant:
         return msg
 
     def _t_run_command(self, command: str, shell: str, changes_system: bool, reason: str) -> str:
+        if edits_registry(command):
+            raise ValueError("Registry editing is turned off in this app. Use the built-in tweaks "
+                             "(apply_optimizations) or open_windows_settings instead.")
         if changes_system or not is_read_only(command, shell):
             self._ask("Run a command", f"{shell}> {command}", reason,
                       "This command can change your system and can't be undone automatically.")
@@ -489,21 +496,6 @@ class Assistant:
         if isinstance(value, (bytes, bytearray)):
             value = value.hex()
         return json.dumps({"value": value, "type": kind})
-
-    def _t_set_registry_value(self, hive: str, key: str, name: str, value_type: str, value: str, reason: str) -> str:
-        parsed: Any = int(value, 0) if value_type in ("DWORD", "QWORD") else value
-        if value_type == "DWORD" and not 0 <= parsed <= 0xFFFFFFFF:
-            raise ValueError("DWORD must be between 0 and 4294967295")
-        cur = self.backend.registry.get(hive, key, name)
-        self._ask("Change a registry setting",
-                  f"{hive}\\{key}\n{name} = {value} ({value_type})\nCurrently: {cur[0] if cur else 'not set'}",
-                  reason, "The old value is backed up - you can undo this in Backup & Restore.")
-        digest = hashlib.sha1(f"{hive}\\{key}\\{name}".lower().encode()).hexdigest()[:10]
-        change = AIChange(f"ai:{digest}", f"AI change: {reason[:70]}", hive, key, name, value_type, parsed)
-        self.changes.record(change)
-        self.backend.tweaks.apply(change.id)
-        self.notify(f"Changed {name}")
-        return f"Set {hive}\\{key}\\{name} = {value}. Backed up; undo with undo_optimizations(['{change.id}'])."
 
     def _t_open_windows_settings(self, uri: str) -> str:
         if not re.fullmatch(r"ms-settings:[\w\-]*", uri):
@@ -570,16 +562,6 @@ class Assistant:
         self.notify(f"Installed {len(res.installed)} driver(s)")
         return json.dumps({"installed": res.installed, "failed": res.failed, "restart_needed": res.reboot,
                            "progress": lines[-5:]})
-
-    def _t_delete_registry_value(self, hive: str, key: str, name: str, reason: str) -> str:
-        cur = self.backend.registry.get(hive, key, name)
-        if cur is None:
-            return "That value doesn't exist - nothing to delete."
-        self._ask("Delete a registry value", f"{hive}\\{key}\n{name} (currently {cur[0]!r})", reason,
-                  "The value is backed up - you can undo this in Backup & Restore.")
-        change_id = self.backend.regedit.delete_value(hive, key, name)
-        self.notify(f"Deleted {name}")
-        return f"Deleted. Undo with undo_optimizations(['{change_id}'])."
 
     def _t_list_running_services(self) -> str:
         self.notify("Listing running services...")

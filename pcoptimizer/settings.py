@@ -11,6 +11,9 @@ from .platform_utils import app_data_dir
 DEFAULTS: dict[str, Any] = {
     "screentime": True,      # record screen time (only while the background helper runs)
     "auto_gaming": False,    # switch to Gaming Mode while a profiled game runs
+    "auto_care": True,       # check the PC regularly and report problems
+    "auto_fix": True,        # let Auto Care fix safe problems by itself
+    "show_advanced": False,  # show the expert tools in the sidebar
 }
 
 

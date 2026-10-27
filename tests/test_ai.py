@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 from pcoptimizer import ai_settings
-from pcoptimizer.ai_assistant import TOOLS, AIChangeLog, Assistant, is_read_only
+from pcoptimizer.ai_assistant import TOOLS, AIChange, AIChangeLog, Assistant, edits_registry, is_read_only
 from pcoptimizer.backend import DemoAIClient, DemoBackend
 
 
@@ -133,21 +133,32 @@ def test_read_only_command_runs_without_asking(backend):
     assert ran == ["ipconfig /all"]
 
 
-def test_registry_change_is_backed_up_and_undoable(backend, tmp_path):
+def test_assistant_cannot_edit_the_registry(backend):
+    names = {t["name"] for t in TOOLS}
+    assert "read_registry_value" in names
+    assert not names & {"set_registry_value", "delete_registry_value"}
+    a = Assistant(backend, client=ScriptedClient([]), approve=lambda *_: True)
+    for cmd, shell in [(r'reg add "HKCU\Control Panel\Mouse" /v X /d 1 /f', "cmd"), ("regedit /s tweak.reg", "cmd"),
+                       (r"Set-ItemProperty -Path HKLM:\SOFTWARE\X -Name Y -Value 1", "powershell"),
+                       (r"Remove-Item 'Registry::HKEY_CURRENT_USER\Software\X'", "powershell")]:
+        out, is_error = a.run_tool("run_command", {"command": cmd, "shell": shell, "changes_system": True,
+                                                   "reason": "x"})
+        assert is_error and "Registry editing is turned off" in out
+    assert not edits_registry(r"reg query HKCU\Software")
+    assert not edits_registry(r"Remove-Item $env:TEMP\x.txt")
+
+
+def test_earlier_ai_registry_changes_stay_undoable(backend, tmp_path):
     reg = backend.registry
     reg.set("HKCU", r"Control Panel\Mouse", "MouseSensitivity", "10", "SZ")
-    client = ScriptedClient([
-        msg("tool_use", tool_use("a", "set_registry_value", {
-            "hive": "HKCU", "key": r"Control Panel\Mouse", "name": "MouseSensitivity", "value_type": "SZ",
-            "value": "14", "reason": "Faster pointer"})),
-        msg("end_turn", text("Done.")),
-    ])
-    Assistant(backend, client=client, approve=lambda *_: True).send("faster mouse")
+    log = AIChangeLog(backend.tweaks, tmp_path / "ai_changes.json")
+    log.record(AIChange("ai:test", "AI change: faster pointer", "HKCU", r"Control Panel\Mouse", "MouseSensitivity",
+                        "SZ", "14"))
+    backend.tweaks.apply("ai:test")
     assert reg.get("HKCU", r"Control Panel\Mouse", "MouseSensitivity")[0] == "14"
-    change_id = backend.ai_changes.changes[0].id
-    # survives a restart: a fresh change log registers it again
-    assert change_id in {c.id for c in AIChangeLog(backend.tweaks, tmp_path / "ai_changes.json").changes}
-    assert backend.tweaks.revert(change_id)
+    # survives a restart: a fresh change log registers it again, so Backup & Restore can undo it
+    assert "ai:test" in {c.id for c in AIChangeLog(backend.tweaks, tmp_path / "ai_changes.json").changes}
+    assert backend.tweaks.revert("ai:test")
     assert reg.get("HKCU", r"Control Panel\Mouse", "MouseSensitivity")[0] == "10"
 
 

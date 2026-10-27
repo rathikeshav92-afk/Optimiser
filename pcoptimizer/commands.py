@@ -228,8 +228,4 @@ COMMANDS: list[MaintenanceCommand] = [
         "list_plans", "Show power plans",
         "Lists every power plan on this PC (the active one has a *).",
         "powercfg /list", "System"),
-    MaintenanceCommand(
-        "regedit", "Open Registry Editor",
-        "Opens Windows' own Registry Editor. Tip: the app's Registry page backs up every change for you.",
-        "start regedit.exe", "System"),
 ]

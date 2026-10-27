@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -18,6 +17,16 @@ from . import theme as T
 from .widgets import Bar, Button, Card, LogBox, ScoreGauge, ScrollFrame, ToggleRow
 
 GIB = 1024 ** 3
+
+
+def ago(ts: float) -> str:
+    """'just now', '5 minutes ago', '3 hours ago', '2 days ago'."""
+    secs = max(0, time.time() - ts)
+    for unit, size in (("day", 86400), ("hour", 3600), ("minute", 60)):
+        if secs >= size:
+            n = int(secs // size)
+            return f"{n} {unit}{'s' if n != 1 else ''} ago"
+    return "just now"
 
 
 class Page(tk.Frame):
@@ -40,7 +49,7 @@ class Page(tk.Frame):
     def header(self, title, subtitle, color=T.ACCENT):
         f = tk.Frame(self.body, bg=T.BG)
         f.pack(fill="x", pady=(0, 18))
-        tk.Frame(f, bg=color, width=4).pack(side="left", fill="y", padx=(0, 12))
+        tk.Frame(f, bg=color, width=3).pack(side="left", fill="y", padx=(0, 14))
         box = tk.Frame(f, bg=T.BG)
         box.pack(side="left", fill="x", expand=True)
         tk.Label(box, text=title, bg=T.BG, fg=T.TEXT, font=T.F_TITLE).pack(anchor="w")
@@ -110,7 +119,10 @@ class TweakList:
 
 class DashboardPage(Page):
     def build(self):
-        self.header("Your PC at a glance", "Hardware specs, a performance rating out of 100 and live usage.")
+        self.header("Hi! Here's how your PC is doing",
+                    "PC Optimizer keeps an eye on your PC, fixes small problems by itself and tells you when "
+                    "something needs you.")
+        self._build_care()
 
         top = tk.Frame(self.body, bg=T.BG)
         top.pack(fill="x", pady=(0, 16))
@@ -155,28 +167,168 @@ class DashboardPage(Page):
         self.profile_lbl = tk.Label(live.body, text="Mode: -", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL)
         self.profile_lbl.pack(anchor="w")
 
-        actions = self.card("Quick actions")
+        actions = self.card("Quick actions", "One click each. Everything can be undone on the Undo Changes page.")
         row = tk.Frame(actions.body, bg=T.CARD)
         row.pack(fill="x")
-        self.boost_btn = Button(row, "⚡  One-Click Boost", self.one_click_boost)
+        self.boost_btn = Button(row, "Speed up my PC", self.one_click_boost)
         self.boost_btn.pack(side="left", padx=(0, 10))
-        Button(row, "▶  Gaming Mode", lambda: self.app.show("gaming"), color=T.GAMING).pack(side="left", padx=(0, 10))
-        Button(row, "\u271A  Health Check", lambda: self.app.show("health"), color=T.CARD_HI).pack(side="left",
-                                                                                                   padx=(0, 10))
-        Button(row, "♲  Clean junk", lambda: self.app.show("cleaner"), color=T.CARD_HI).pack(side="left", padx=(0, 10))
-        self.ram_btn = Button(row, "Free up RAM", self.free_ram, color=T.CARD_HI)
-        self.ram_btn.pack(side="left")
-        tk.Label(actions.body, text="One-Click Boost creates a restore point, applies the recommended speed and "
-                                    "privacy settings, turns off unneeded services, cleans junk, frees RAM and "
-                                    "flushes DNS. You choose the steps, and everything can be undone.",
-                 bg=T.CARD, fg=T.MUTED, font=T.F_SMALL, wraplength=820, justify="left").pack(anchor="w", pady=(10, 0))
+        Button(row, "Clean up junk", lambda: self.app.show("cleaner"), color=T.CARD_HI).pack(side="left", padx=(0, 10))
+        self.ram_btn = Button(row, "Free up memory", self.free_ram, color=T.CARD_HI)
+        self.ram_btn.pack(side="left", padx=(0, 10))
+        Button(row, "Gaming Mode", lambda: self.app.show("gaming"), color=T.CARD_HI).pack(side="left")
 
-        self.specs_card = self.card("System specifications")
+        self.tips_card = self.card("Ways to make your PC even faster",
+                                   "Optional upgrades. Nothing is wrong - these just help if you want more speed.")
+        self.tips_card.pack_forget()
+
+        self.specs_card = self.card("What's inside your PC")
         tk.Label(self.specs_card.body, text="Reading hardware information...", bg=T.CARD, fg=T.MUTED).pack(anchor="w")
 
-        self.log = self.log_card(height=7)
+        self.log = self.log_card("What happened", height=6)
         self.app.on_specs(self.populate)
+        self.app.on_care(self.render_care)
         self.tick()
+        self._refresh_ago()
+
+    # ---------------------------------------------------------------- Auto Care
+    SEVERITY = {"bad": (T.BAD, "\uea39", "✖"), "warn": (T.WARN, "\ue7ba", "⚠"), "tip": (T.ACCENT_FG, "\ue82f", "★")}
+
+    def _build_care(self):
+        self.hero = Card(self.body)
+        self.hero.pack(fill="x", pady=(0, 16))
+        row = tk.Frame(self.hero.body, bg=T.CARD)
+        row.pack(fill="x")
+        self.badge = tk.Canvas(row, width=64, height=64, bg=T.CARD, highlightthickness=0)
+        self.badge.pack(side="left", padx=(0, 16))
+        text = tk.Frame(row, bg=T.CARD)
+        text.pack(side="left", fill="x", expand=True)
+        self.headline = tk.Label(text, text="Checking your PC...", bg=T.CARD, fg=T.TEXT, font=(T.FAMILY_SEMI, 16),
+                                 anchor="w")
+        self.headline.pack(fill="x")
+        self.subline = tk.Label(text, text="This takes a few seconds.", bg=T.CARD, fg=T.MUTED, font=T.F_BODY,
+                                anchor="w", justify="left", wraplength=560)
+        self.subline.pack(fill="x", pady=(2, 0))
+        self.check_btn = Button(row, "Check again", lambda: self.app.run_care(manual=True), color=T.CARD_HI)
+        self.check_btn.pack(side="right")
+        self._draw_badge(T.MUTED, "\ue895", "…")
+
+        self.attention = self.card("Needs your attention", "Auto Care can't fix these by itself. Each one has a "
+                                                           "button that helps.")
+        self.attention.pack_forget()
+        self.done_card = self.card("Done for you", "Small problems Auto Care fixed by itself.")
+
+        prefs = self.backend.care_settings()
+        self.care_vars = {k: tk.BooleanVar(value=prefs[k]) for k in ("auto_care", "auto_fix")}
+        settings = self.card("Auto Care settings")
+        ToggleRow(settings.body, "Check my PC automatically",
+                  "Every 30 minutes while this app is open, and every few hours in the background when it's closed. "
+                  "You get a Windows notification if something needs you.", self.care_vars["auto_care"]).pack(
+            fill="x", pady=(0, 10))
+        ToggleRow(settings.body, "Fix small problems by itself",
+                  "Frees up memory, deletes temporary junk files and sets your screen to its smoothest setting. "
+                  "Never touches your personal files.", self.care_vars["auto_fix"]).pack(fill="x")
+        for key, var in self.care_vars.items():
+            var.trace_add("write", lambda *_a, k=key: self._set_pref(k))
+        self._care_checked_at = None
+
+    def _set_pref(self, key):
+        value = self.care_vars[key].get()
+        self.app.bg(lambda: self.backend.set_care_setting(key, value),
+                    lambda res: None if res[0] else self.app.toast.show("Couldn't change the setting", res[1],
+                                                                        kind="bad"),
+                    label="Saving")
+
+    def _draw_badge(self, color, glyph, fallback):
+        c = self.badge
+        c.delete("all")
+        c.create_oval(2, 2, 62, 62, fill=color, outline="")
+        c.create_oval(7, 7, 57, 57, fill=T.CARD, outline="")
+        c.create_text(32, 32, text=glyph if T.ICON_FONT else fallback, fill=color,
+                      font=(T.ICON_FONT, 18) if T.ICON_FONT else (T.FAMILY, 18, "bold"))
+
+    def render_care(self, rep):
+        if rep is None:
+            self.headline.configure(text="Checking your PC...")
+            self.subline.configure(text="Looking for problems and fixing the small ones. This takes a few seconds.")
+            self.check_btn.set_enabled(False)
+            self._draw_badge(T.ACCENT_FG, "\ue895", "…")
+            return
+        self.check_btn.set_enabled(True)
+        self._care_checked_at = rep.checked_at
+        need = len(rep.attention) + len(rep.failed)
+        if need:
+            bad = rep.failed or any(p.severity == "bad" for p in rep.attention)
+            self.headline.configure(text=f"{need} thing{'s' if need != 1 else ''} need{'s' if need == 1 else ''} "
+                                         "your attention")
+            self._draw_badge(T.BAD if bad else T.WARN, "\ue7ba", "!")
+        else:
+            self.headline.configure(text="Your PC is in good shape")
+            self._draw_badge(T.GOOD, "\ue73e", "✔")
+        self._refresh_ago(reschedule=False)
+
+        body = self.attention.body
+        for w in body.winfo_children():
+            w.destroy()
+        items = [(p.severity, p.title, p.detail, p.action_label, p.action) for p in rep.attention]
+        items += [("bad", "Something didn't work", f, "", "") for f in rep.failed]
+        if items:
+            self.attention.pack(fill="x", pady=(0, 16), after=self.hero)
+            for i, item in enumerate(items):
+                self._problem_row(body, *item, first=not i)
+        else:
+            self.attention.pack_forget()
+
+        tips = self.tips_card.body
+        for w in tips.winfo_children():
+            w.destroy()
+        if rep.tips:
+            self.tips_card.pack(fill="x", pady=(0, 16), before=self.specs_card)
+            for i, p in enumerate(rep.tips):
+                self._problem_row(tips, p.severity, p.title, p.detail, p.action_label, p.action, first=not i)
+        else:
+            self.tips_card.pack_forget()
+        self._render_history()
+
+    def _problem_row(self, parent, severity, title, detail, label, action, first):
+        if not first:
+            tk.Frame(parent, bg=T.BORDER, height=1).pack(fill="x", pady=10)
+        color, glyph, fallback = self.SEVERITY[severity]
+        row = tk.Frame(parent, bg=T.CARD)
+        row.pack(fill="x")
+        tk.Label(row, text=glyph if T.ICON_FONT else fallback, bg=T.CARD, fg=color,
+                 font=(T.ICON_FONT or T.FAMILY, 13), width=2).pack(side="left", anchor="n", padx=(0, 10))
+        txt = tk.Frame(row, bg=T.CARD)
+        txt.pack(side="left", fill="x", expand=True)
+        tk.Label(txt, text=title, bg=T.CARD, fg=T.TEXT, font=T.F_LABEL, anchor="w").pack(fill="x")
+        tk.Label(txt, text=detail, bg=T.CARD, fg=T.MUTED, font=T.F_SMALL, anchor="w", justify="left",
+                 wraplength=600).pack(fill="x", pady=(2, 0))
+        if action:
+            Button(row, label, lambda: self.app.do_action(action, done=lambda: self.app.run_care(manual=True)),
+                   small=True, color=T.ACCENT if severity != "tip" else T.CARD_HI).pack(side="right", padx=(12, 0))
+
+    def _render_history(self):
+        body = self.done_card.body
+        for w in body.winfo_children():
+            w.destroy()
+        history = self.backend.care_state().history[:6]
+        if not history:
+            tk.Label(body, text="Nothing needed fixing yet.", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).pack(anchor="w")
+        for h in history:
+            row = tk.Frame(body, bg=T.CARD)
+            row.pack(fill="x", pady=3)
+            tk.Label(row, text="\ue73e" if T.ICON_FONT else "✔", bg=T.CARD, fg=T.GOOD,
+                     font=(T.ICON_FONT or T.FAMILY, 10), width=2).pack(side="left")
+            tk.Label(row, text=h["text"], bg=T.CARD, fg=T.TEXT_SOFT, font=T.F_BODY).pack(side="left", padx=(6, 0))
+            tk.Label(row, text=ago(h["at"]), bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).pack(side="right")
+
+    def _refresh_ago(self, reschedule=True):
+        if self._care_checked_at and not self.app.care_running:
+            on = self.care_vars["auto_care"].get()
+            self.subline.configure(text=f"Last checked {ago(self._care_checked_at)}. "
+                                        + ("Auto Care is on and checks again by itself." if on else
+                                           "Auto Care is off. Click Check again to check now."))
+        if reschedule:
+            self.after(30_000, self._refresh_ago)
 
     # ---------------------------------------------------------------- live
     def tick(self):
@@ -543,8 +695,9 @@ class BalancedPage(Page):
 
 class TweaksPage(Page):
     def build(self):
-        self.header("Speed Up PC", "Windows settings and registry tweaks that make your PC faster and snappier. "
-                                   "Your original values are backed up before anything changes.")
+        self.header("Speed Up", "Windows settings that make your PC faster and snappier. The recommended ones are "
+                                "already ticked - just click Apply. Your original settings are saved first, so you "
+                                "can undo anything.")
         c = self.card("Performance tweaks")
         brow = tk.Frame(c.body, bg=T.CARD)
         brow.pack(fill="x", pady=(0, 14))
@@ -731,8 +884,8 @@ class TweaksPage(Page):
 
 class CleanerPage(Page):
     def build(self):
-        self.header("Cleaner & RAM", "Delete temporary and junk files to free disk space, and release memory "
-                                     "that background apps are holding on to.")
+        self.header("Clean Up", "Delete junk files to free up space, and free up memory that background apps "
+                                "are holding on to. Your personal files are never touched.")
         ram = self.card("Memory (RAM)")
         row = tk.Frame(ram.body, bg=T.CARD)
         row.pack(fill="x")
@@ -869,7 +1022,7 @@ class CleanerPage(Page):
 
 class CommandsPage(Page):
     def build(self):
-        self.header("CMD Toolkit", "Proven Windows maintenance commands - repair, clean, optimise and fix network "
+        self.header("Command Tools", "Proven Windows maintenance commands - repair, clean, optimise and fix network "
                                    "issues. Output appears live below.")
         self.buttons = []
         groups: dict[str, list] = {}
@@ -901,7 +1054,7 @@ class CommandsPage(Page):
                              wraplength=700).pack(anchor="w")
                 lines = c.shown.splitlines()
                 shown = c.shown if len(lines) == 1 else f"PowerShell script, {len(lines)} lines - click to view"
-                code = tk.Label(txt, text=shown, bg=T.CARD, fg=T.ACCENT, font=T.F_MONO, justify="left",
+                code = tk.Label(txt, text=shown, bg=T.CARD, fg=T.ACCENT_FG, font=T.F_MONO, justify="left",
                                 wraplength=700)
                 code.pack(anchor="w", pady=(2, 0))
                 if shown != c.shown:
@@ -912,7 +1065,7 @@ class CommandsPage(Page):
                                                    "you trust.")
         row = tk.Frame(custom.body, bg=T.CARD)
         row.pack(fill="x")
-        self.entry = tk.Entry(row, bg="#0b0d12", fg=T.TEXT, insertbackground=T.TEXT, relief="flat", font=T.F_MONO)
+        self.entry = tk.Entry(row, bg=T.INPUT, fg=T.TEXT, insertbackground=T.TEXT, relief="flat", font=T.F_MONO)
         self.entry.pack(side="left", fill="x", expand=True, ipady=7, padx=(0, 10))
         self.entry.bind("<Return>", lambda _: self.run_custom())
         btn = Button(row, "Run", self.run_custom, small=True)
@@ -953,7 +1106,8 @@ class CommandsPage(Page):
 
 class RestorePage(Page):
     def build(self):
-        self.header("Backup & Restore", "Every change PC Optimizer makes is recorded so you can undo it at any time.",
+        self.header("Undo Changes", "Every change PC Optimizer makes is saved, so you can put anything back the "
+                                    "way it was - one change at a time or everything at once.",
                     T.WARN)
         c = self.card("Safety net")
         row = tk.Frame(c.body, bg=T.CARD)
@@ -1199,7 +1353,7 @@ class ServicesPage(Page):
         bar = tk.Frame(allc.body, bg=T.CARD)
         bar.pack(fill="x", pady=(0, 10))
         tk.Label(bar, text="Search", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).pack(side="left")
-        self.search = tk.Entry(bar, bg="#0b0d12", fg=T.TEXT, insertbackground=T.TEXT, relief="flat", font=T.F_BODY,
+        self.search = tk.Entry(bar, bg=T.INPUT, fg=T.TEXT, insertbackground=T.TEXT, relief="flat", font=T.F_BODY,
                                width=30)
         self.search.pack(side="left", ipady=5, padx=(6, 14))
         self.search.bind("<KeyRelease>", lambda _: self._render_all())
@@ -1411,7 +1565,7 @@ class ServicesPage(Page):
 
 class BenchmarkPage(Page):
     def build(self):
-        self.header("Benchmark", "Measure your PC before and after optimising. Run it once now, apply the "
+        self.header("Speed Test", "Measure your PC before and after optimising. Run it once now, apply the "
                                  "optimisations, restart, then run it again to see the difference.")
         c = self.card()
         row = tk.Frame(c.body, bg=T.CARD)
@@ -1541,7 +1695,7 @@ class ApprovalDialog(tk.Toplevel):
         body.pack(fill="both", expand=True)
         tk.Label(body, text="⚡ The AI assistant wants to:", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).pack(anchor="w")
         tk.Label(body, text=title, bg=T.CARD, fg=T.TEXT, font=T.F_H2, wraplength=520, justify="left").pack(anchor="w", pady=(2, 10))
-        box = tk.Text(body, height=min(12, max(3, details.count("\n") + 2)), width=70, bg="#0b0d12", fg="#c9d1e0",
+        box = tk.Text(body, height=min(12, max(3, details.count("\n") + 2)), width=70, bg=T.INPUT, fg=T.TEXT_SOFT,
                       font=T.F_MONO, relief="flat", wrap="word", padx=10, pady=8)
         box.insert("1.0", details)
         box.configure(state="disabled")
@@ -1572,7 +1726,7 @@ class AssistantPage(Page):
     def build(self):
         from .. import ai_settings
 
-        self.header("AI Assistant", "Describe a problem or a setting you can't find, in your own words. The AI "
+        self.header("Ask for Help", "Describe a problem or a setting you can't find, in your own words. The AI "
                                     "looks into your PC and fixes it for you, and asks your permission before "
                                     "changing anything.", "#a78bfa")
         self.setup = self.card("Connect the AI", "The assistant uses Claude by Anthropic. Create an API key at "
@@ -1581,15 +1735,15 @@ class AssistantPage(Page):
                                                  "stored encrypted on this PC.")
         row = tk.Frame(self.setup.body, bg=T.CARD)
         row.pack(fill="x")
-        self.key_entry = tk.Entry(row, show="•", bg="#0b0d12", fg=T.TEXT, insertbackground=T.TEXT,
+        self.key_entry = tk.Entry(row, show="•", bg=T.INPUT, fg=T.TEXT, insertbackground=T.TEXT,
                                   relief="flat", font=T.F_MONO)
         self.key_entry.pack(side="left", fill="x", expand=True, ipady=7, padx=(0, 10))
         self.key_entry.bind("<Return>", lambda _: self.save_key())
-        Button(row, "Save key", self.save_key, color="#7c5cff").pack(side="left")
+        Button(row, "Save key", self.save_key, color=T.AI).pack(side="left")
 
         chat = self.card()
         self.chat_card = chat
-        self.transcript = tk.Text(chat.body, height=17, bg="#0b0d12", fg=T.TEXT, font=T.F_BODY, relief="flat",
+        self.transcript = tk.Text(chat.body, height=17, bg=T.INPUT, fg=T.TEXT, font=T.F_BODY, relief="flat",
                                   wrap="word", padx=14, pady=12, state="disabled", spacing1=2, spacing3=4)
         self.transcript.pack(fill="both", expand=True)
         for tag, opts in {"you": {"foreground": T.ACCENT, "font": (T.FAMILY, 10, "bold")},
@@ -1609,13 +1763,13 @@ class AssistantPage(Page):
 
         inp = tk.Frame(chat.body, bg=T.CARD)
         inp.pack(fill="x", pady=(6, 0))
-        self.input = tk.Text(inp, height=3, bg="#0b0d12", fg=T.TEXT, insertbackground=T.TEXT, relief="flat",
+        self.input = tk.Text(inp, height=3, bg=T.INPUT, fg=T.TEXT, insertbackground=T.TEXT, relief="flat",
                              font=T.F_BODY, wrap="word", padx=10, pady=8)
         self.input.pack(side="left", fill="x", expand=True, padx=(0, 10))
         self.input.bind("<Return>", self._enter)
         btns = tk.Frame(inp, bg=T.CARD)
         btns.pack(side="left", fill="y")
-        self.send_btn = Button(btns, "Send", lambda: self.send(), color="#7c5cff")
+        self.send_btn = Button(btns, "Send", lambda: self.send(), color=T.AI)
         self.send_btn.pack(fill="x")
         self.stop_btn = Button(btns, "Stop", self.stop, color=T.CARD_HI, small=True)
         self.stop_btn.pack(fill="x", pady=(6, 0))
@@ -2295,243 +2449,6 @@ class DriversPage(Page):
                     label="Backing up drivers")
 
 
-# =============================================================================== Registry editor
-
-
-class ValueDialog(tk.Toplevel):
-    """Create or edit one registry value."""
-
-    def __init__(self, parent, name="", kind="SZ", text="", new=True):
-        from ..registry import KINDS
-
-        super().__init__(parent)
-        self.result = None
-        self.title("New value" if new else "Edit value")
-        self.configure(bg=T.CARD)
-        self.transient(parent)
-        body = tk.Frame(self, bg=T.CARD, padx=20, pady=16)
-        body.pack(fill="both", expand=True)
-        tk.Label(body, text="Name", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).grid(row=0, column=0, sticky="w")
-        self.name = tk.Entry(body, bg="#0b0d12", fg=T.TEXT, insertbackground=T.TEXT, relief="flat", font=T.F_MONO,
-                             width=52)
-        self.name.insert(0, name)
-        if not new:
-            self.name.configure(state="readonly", readonlybackground="#0b0d12")
-        self.name.grid(row=1, column=0, columnspan=2, sticky="ew", ipady=5, pady=(2, 10))
-        tk.Label(body, text="Type", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).grid(row=2, column=0, sticky="w")
-        self.kind = ttk.Combobox(body, values=KINDS, state="readonly", width=14)
-        self.kind.set(kind if kind in KINDS else "SZ")
-        self.kind.grid(row=3, column=0, sticky="w", pady=(2, 10))
-        self.hint = tk.Label(body, text="", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL)
-        self.hint.grid(row=3, column=1, sticky="w", padx=10)
-        tk.Label(body, text="Data", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).grid(row=4, column=0, sticky="w")
-        self.data = tk.Text(body, height=5, width=52, bg="#0b0d12", fg=T.TEXT, insertbackground=T.TEXT,
-                            relief="flat", font=T.F_MONO, wrap="word")
-        self.data.insert("1.0", text)
-        self.data.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(2, 0))
-        self.err = tk.Label(body, text="", bg=T.CARD, fg=T.BAD, font=T.F_SMALL)
-        self.err.grid(row=6, column=0, columnspan=2, sticky="w", pady=(6, 0))
-        row = tk.Frame(body, bg=T.CARD)
-        row.grid(row=7, column=0, columnspan=2, sticky="e", pady=(10, 0))
-        Button(row, "Save", self._save).pack(side="right")
-        Button(row, "Cancel", self.destroy, color=T.CARD_HI).pack(side="right", padx=8)
-        self.kind.bind("<<ComboboxSelected>>", lambda _: self._hint())
-        self._hint()
-        self.bind("<Escape>", lambda _: self.destroy())
-        self.grab_set()
-        (self.name if new else self.data).focus_set()
-
-    def _hint(self):
-        self.hint.configure(text={"DWORD": "number, e.g. 1 or 0x10", "QWORD": "number, e.g. 1 or 0x10",
-                                  "BINARY": "hex bytes, e.g. 90 12 03 80", "MULTI_SZ": "one string per line",
-                                  "EXPAND_SZ": "text, %VARIABLES% allowed"}.get(self.kind.get(), "text"))
-
-    def _save(self):
-        from ..regedit import parse_value
-
-        kind, text = self.kind.get(), self.data.get("1.0", "end").rstrip("\n")
-        try:
-            parse_value(kind, text)
-        except ValueError as exc:
-            self.err.configure(text=str(exc))
-            return
-        self.result = (self.name.get(), kind, text)
-        self.grab_release()
-        self.destroy()
-
-
-class RegistryPage(Page):
-    def build(self):
-        from ..regedit import FAVORITES
-        from ..registry import HIVES
-
-        self.header("Registry", "View and change Windows registry settings. Every change is backed up first and "
-                                "can be undone in Backup & Restore.", T.WARN)
-        nav = self.card()
-        row = tk.Frame(nav.body, bg=T.CARD)
-        row.pack(fill="x")
-        Button(row, "↑", self.up, color=T.CARD_HI, small=True).pack(side="left", padx=(0, 6))
-        self.hive = ttk.Combobox(row, values=HIVES, state="readonly", width=6)
-        self.hive.set("HKCU")
-        self.hive.pack(side="left")
-        self.key = tk.Entry(row, bg="#0b0d12", fg=T.TEXT, insertbackground=T.TEXT, relief="flat", font=T.F_MONO)
-        self.key.pack(side="left", fill="x", expand=True, ipady=6, padx=8)
-        self.key.bind("<Return>", lambda _: self.go())
-        Button(row, "Go", self.go, small=True).pack(side="left")
-        fav = tk.Frame(nav.body, bg=T.CARD)
-        fav.pack(fill="x", pady=(10, 0))
-        tk.Label(fav, text="Jump to:", bg=T.CARD, fg=T.MUTED, font=T.F_SMALL).pack(side="left", padx=(0, 6))
-        for i, (label, hive, key) in enumerate(FAVORITES):
-            if i == 4:
-                fav = tk.Frame(nav.body, bg=T.CARD)
-                fav.pack(fill="x", pady=(6, 0))
-                tk.Label(fav, text="", bg=T.CARD, width=8).pack(side="left")
-            Button(fav, label, lambda h=hive, k=key: self.open(h, k), color=T.CARD_HI, small=True).pack(
-                side="left", padx=(0, 6))
-        self.danger = tk.Label(nav.body, text="", bg=T.CARD, fg=T.BAD, font=(T.FAMILY, 9, "bold"), wraplength=840,
-                               justify="left")
-        self.danger.pack(anchor="w", pady=(8, 0))
-
-        panes = tk.Frame(self.body, bg=T.BG)
-        panes.pack(fill="x", pady=(0, 16))
-        panes.columnconfigure(0, weight=1, uniform="p")
-        panes.columnconfigure(1, weight=2, uniform="p")
-        left = Card(panes, "Subkeys", "Double-click to open")
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
-        self.subkeys = ttk.Treeview(left.body, columns=("k",), show="", height=14, selectmode="browse")
-        self.subkeys.column("k", anchor="w")
-        self.subkeys.pack(fill="both", expand=True)
-        self.subkeys.bind("<Double-1>", lambda _: self._enter_subkey())
-        self.subkeys.bind("<Return>", lambda _: self._enter_subkey())
-        right = Card(panes, "Values", "Double-click a value to edit it")
-        right.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
-        self.values = ttk.Treeview(right.body, columns=("name", "type", "data"), show="headings", height=12)
-        for col, title, w in (("name", "Name", 180), ("type", "Type", 90), ("data", "Data", 300)):
-            self.values.heading(col, text=title)
-            self.values.column(col, width=w, anchor="w")
-        self.values.pack(fill="both", expand=True)
-        self.values.bind("<Double-1>", lambda _: self.edit())
-        btns = tk.Frame(right.body, bg=T.CARD)
-        btns.pack(fill="x", pady=(10, 0))
-        Button(btns, "New value", self.new, small=True).pack(side="left")
-        Button(btns, "Edit", self.edit, color=T.CARD_HI, small=True).pack(side="left", padx=6)
-        Button(btns, "Delete", self.delete, color=T.BAD, small=True).pack(side="left")
-        Button(btns, "Open in Registry Editor", lambda: self.backend.open_in_regedit(*self._here()),
-               color=T.CARD_HI, small=True).pack(side="right")
-        self.log = self.log_card(height=6)
-        self._vals = {}
-        self.open("HKCU", r"Control Panel\Desktop")
-
-    # ------------------------------------------------------------------ navigation
-    def _here(self):
-        return self.hive.get(), self.key.get().strip().strip("\\")
-
-    def open(self, hive, key):
-        from ..regedit import is_dangerous
-
-        self.hive.set(hive)
-        self.key.delete(0, "end")
-        self.key.insert(0, key)
-        self.danger.configure(text="⚠ Careful: wrong values here can stop Windows from starting. Change things "
-                                   "only if you know exactly what they do." if is_dangerous(key) else "")
-        reg = self.backend.registry
-
-        def done(res):
-            subkeys, values = res
-            self.subkeys.delete(*self.subkeys.get_children())
-            for sk in subkeys:
-                self.subkeys.insert("", "end", iid=sk, values=("\u25B8 " + sk,))
-            self._render_values(values)
-
-        self.app.bg(lambda: (reg.subkeys(hive, key), reg.values(hive, key)), done, label="Reading registry")
-
-    def _render_values(self, values):
-        from ..regedit import format_value
-
-        self._vals = values
-        self.values.delete(*self.values.get_children())
-        for name in sorted(values, key=str.lower):
-            value, kind = values[name]
-            self.values.insert("", "end", iid="v:" + name, values=(name or "(Default)", kind,
-                                                                   format_value(value, kind)))
-
-    def go(self):
-        from ..regedit import parse_path
-
-        text = self.key.get().strip()
-        try:
-            hive, key = parse_path(text) if re.match(r"^(computer\\)?hk", text, re.I) else (self.hive.get(), text)
-        except ValueError as exc:
-            self.log.write(f"[FAILED] {exc}")
-            return
-        self.open(hive, key.strip("\\"))
-
-    def up(self):
-        hive, key = self._here()
-        self.open(hive, key.rsplit("\\", 1)[0] if "\\" in key else "")
-
-    def _enter_subkey(self):
-        sel = self.subkeys.selection()
-        if sel:
-            hive, key = self._here()
-            self.open(hive, f"{key}\\{sel[0]}" if key else sel[0])
-
-    # ------------------------------------------------------------------ editing
-    def _selected(self):
-        sel = self.values.selection()
-        return sel[0][2:] if sel else None
-
-    def _apply(self, action, *args, summary):
-        from ..regedit import is_dangerous
-
-        hive, key = self._here()
-        warn = "\n\n⚠ This key is critical to Windows. A wrong value can stop your PC from starting." \
-            if is_dangerous(key) else ""
-        if not self.confirm("Change registry", f"{summary}\n\nIn: {hive}\\{key}\n\nThe old value is backed up and "
-                                               f"can be undone in Backup & Restore.{warn}"):
-            return
-        ed = self.backend.regedit
-        fn = ed.set_value if action == "set" else ed.delete_value
-
-        def done(_):
-            self.log.write(f"[OK] {summary} (undo it in Backup & Restore)")
-            self.open(hive, key)
-
-        self.app.bg(lambda: fn(hive, key, *args), done, error=lambda e: self.log.write(f"[FAILED] {e}"),
-                    label="Changing registry")
-
-    def new(self):
-        dlg = ValueDialog(self.winfo_toplevel())
-        self.wait_window(dlg)
-        if dlg.result:
-            name, kind, text = dlg.result
-            if name in self._vals and not self.confirm("Replace value", f"'{name}' already exists. Replace it?"):
-                return
-            self._apply("set", name, kind, text, summary=f"Set {name or '(Default)'} ({kind})")
-
-    def edit(self):
-        from ..regedit import edit_text
-        from ..registry import KINDS
-
-        name = self._selected()
-        if name is None:
-            return
-        value, kind = self._vals[name]
-        if kind not in KINDS:
-            self.log.write("[FAILED] This value has a special type. Use 'Open in Registry Editor' to change it.")
-            return
-        dlg = ValueDialog(self.winfo_toplevel(), name, kind, edit_text(value, kind), new=False)
-        self.wait_window(dlg)
-        if dlg.result:
-            _, new_kind, text = dlg.result
-            self._apply("set", name, new_kind, text, summary=f"Change {name or '(Default)'} to {text[:60]!r}")
-
-    def delete(self):
-        name = self._selected()
-        if name is not None:
-            self._apply("delete", name, summary=f"Delete {name or '(Default)'}")
-
-
 # =============================================================================== Health check
 
 
@@ -2540,16 +2457,16 @@ class HealthPage(Page):
              "info": ("ℹ", "INFO", T.ACCENT), "ok": ("✔", "GOOD", T.GOOD)}
 
     def build(self):
-        self.header("Health Check", "Finds the settings and conditions that cost your PC the most performance - "
-                                    "many of them outside Windows, like your BIOS and monitor.", T.GOOD)
+        self.header("PC Check-up", "A detailed look at everything that affects your PC's speed. Auto Care on the "
+                                   "Home page already fixes the small things for you.", T.GOOD)
         top = self.card()
         row = tk.Frame(top.body, bg=T.CARD)
         row.pack(fill="x")
         self.summary = tk.Label(row, text="Not checked yet", bg=T.CARD, fg=T.TEXT, font=T.F_H2)
         self.summary.pack(side="left")
-        self.check_btn = Button(row, "↻  Run health check", self.run_check, color=T.CARD_HI)
+        self.check_btn = Button(row, "Check again", self.run_check, color=T.CARD_HI)
         self.check_btn.pack(side="right")
-        self.fix_btn = Button(row, "✔  Fix everything", self.fix_everything, color=T.GOOD)
+        self.fix_btn = Button(row, "Fix everything", self.fix_everything, color=T.GOOD)
         self.fix_btn.pack(side="right", padx=8)
         self.manual_card = self.card("Steps only you can do")
         self.manual_card.pack_forget()
@@ -2653,31 +2570,7 @@ class HealthPage(Page):
         self.app.bg(lambda: fixall.run(self.backend, dlg.result, log), done, error, label="Fixing everything")
 
     def fix(self, f):
-        action = f.fix
-        if action.startswith("page:"):
-            self.app.show(action[5:])
-        elif action.startswith("refresh:"):
-            device, hz = action[len("refresh:"):].rsplit(":", 1)
-
-            def done(res):
-                ok, msg = res
-                self.log.write(f"[OK] Monitor switched to {hz} Hz" if ok else f"[FAILED] {msg}")
-                self.run_check()
-
-            self.app.bg(lambda: self.backend.set_refresh_rate(device, int(hz)), done, label="Changing refresh rate")
-        elif action == "bios":
-            if self.confirm("Restart into BIOS", "Your PC will restart straight into the BIOS/UEFI setup in 5 "
-                                                 "seconds. Save your work first.\n\nLook for 'XMP', 'EXPO' or "
-                                                 "'DOCP' (memory) and 'Re-Size BAR' / 'Above 4G Decoding' "
-                                                 "(often under Advanced or AI Tweaker). Save and exit with F10."):
-                code = self.backend.restart_to_bios()
-                self.log.write("> Restarting into BIOS..." if code == 0 else
-                               "[FAILED] This PC can't restart straight into the BIOS. Restart and press Del or F2 "
-                               "while it starts.")
-        elif action == "restart":
-            if self.confirm("Restart", "Restart your PC in 10 seconds? Save your work first."):
-                self.backend.restart_pc()
-                self.log.write("> Restarting in 10 seconds (run 'shutdown /a' to cancel)")
+        self.app.do_action(f.fix, done=self.run_check)
 
 
 class FixAllDialog(tk.Toplevel):

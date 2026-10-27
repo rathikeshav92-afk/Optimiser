@@ -134,3 +134,13 @@ def test_defender_exclusion_keeps_preexisting(b):
     b.games.update(g, defender_exclusion=True)
     b.games.remove(g)
     assert b.tweaks.runner.exclusions == set()
+
+
+@pytest.mark.parametrize("gpu,capable", [("NVIDIA GeForce GTX 1630", False), ("NVIDIA GeForce RTX 2060", False),
+                                         ("NVIDIA GeForce RTX 3060", True), ("NVIDIA GeForce RTX 4070", True),
+                                         ("AMD Radeon RX 580", False), ("AMD Radeon RX 6700 XT", True),
+                                         ("Intel(R) Arc(TM) A770 Graphics", True), ("Intel(R) UHD Graphics 770", False),
+                                         ("Microsoft Basic Display Adapter", False)])
+def test_rebar_only_suggested_for_capable_cards(gpu, capable):
+    assert health.rebar_capable(gpu) is capable
+    assert ("rebar" in statuses(facts(gpu_name=gpu, rebar=False))) is capable

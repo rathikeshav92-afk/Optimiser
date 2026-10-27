@@ -397,6 +397,22 @@ Unregister-ScheduledTask -TaskName {_ps_quote(TASK_NAME)} -Confirm:$false -Error
     return res.returncode == 0, (res.stderr or res.stdout).strip()
 
 
+def autostart_target() -> str:
+    """The command the sign-in task runs ("program arguments"), or "" when there is no task."""
+    if not IS_WINDOWS:
+        return ""
+    res = powershell(f"$a = (Get-ScheduledTask -TaskName {_ps_quote(TASK_NAME)} -ErrorAction Stop).Actions[0]; "
+                     "$a.Execute + ' ' + $a.Arguments", timeout=30)
+    return res.stdout.strip() if res.returncode == 0 else ""
+
+
+def stop_trackers() -> None:
+    """Stop every running background helper, whichever copy of the app started it."""
+    if IS_WINDOWS:
+        powershell("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*--tracker*' -and "
+                   "$_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }", timeout=60)
+
+
 def autostart_enabled() -> bool:
     if not IS_WINDOWS:
         return False

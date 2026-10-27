@@ -168,7 +168,21 @@ def _uptime(f: Facts) -> Finding | None:
     return Finding("uptime", "Last restart", OK, f"{days} day{'s' if days != 1 else ''} ago.")
 
 
+def rebar_capable(gpu_name: str) -> bool:
+    """Resizable BAR needs an NVIDIA RTX 30-series or newer, AMD RX 6000 or newer, or Intel Arc card."""
+    name = gpu_name.lower()
+    nvidia = re.search(r"rtx\s*(\d{2})\d{2}", name)
+    if nvidia:
+        return int(nvidia.group(1)) >= 30
+    amd = re.search(r"rx\s*(\d)\d{3}", name)
+    if amd:
+        return int(amd.group(1)) >= 6
+    return bool(re.search(r"\barc\b", name))
+
+
 def _rebar(f: Facts) -> Finding | None:
+    if f.gpu_name and not rebar_capable(f.gpu_name):
+        return None  # e.g. GTX 16-series: the card can't use it, so there's nothing to turn on
     if f.rebar is None:
         if not f.gpu_name or "nvidia" not in f.gpu_name.lower() and "radeon" not in f.gpu_name.lower():
             return None

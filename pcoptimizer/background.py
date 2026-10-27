@@ -1,7 +1,7 @@
-"""The background helper (``--tracker``): screen time recording and Auto Gaming Mode.
+"""The background helper (``--tracker``): screen time recording, Auto Gaming Mode and Auto Care.
 
 It starts at sign-in through one Task Scheduler task, which exists while at least
-one of the two features is on. Each feature checks the shared settings file, so
+one of the features is on. Each feature checks the shared settings file, so
 turning one off in the app takes effect within a minute without restarting it.
 """
 
@@ -10,6 +10,7 @@ from __future__ import annotations
 import ctypes
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Callable
@@ -20,10 +21,12 @@ from .platform_utils import IS_WINDOWS, app_data_dir
 GAME_CHECK_SECONDS = 10
 GAME_GONE_CHECKS = 3  # the game must be gone this many checks in a row (30 s) before switching back
 SETTINGS_RELOAD_SECONDS = 60
+CARE_FIRST_SECONDS = 5 * 60   # first check-up a few minutes after sign-in, once the PC has settled
+CARE_EVERY_SECONDS = 4 * 3600
 
 
 def helper_needed(values: dict) -> bool:
-    return bool(values.get("screentime") or values.get("auto_gaming"))
+    return bool(values.get("screentime") or values.get("auto_gaming") or values.get("auto_care"))
 
 
 def sync_task(values: dict) -> tuple[bool, str]:
@@ -127,6 +130,25 @@ def running_exe_names() -> set[str]:
     return names
 
 
+# --------------------------------------------------------------------------- Auto Care
+
+
+def care_checkup(make_backend: Callable, auto_fix: bool, log: Callable[[str], None],
+                 notify: Callable[[list[str]], object] | None = None):
+    """One background check-up: fix what's safe, record it, and notify about anything that needs the user."""
+    from . import autocare
+
+    backend = make_backend()
+    rep = autocare.run(backend, backend.specs(), log=log, auto_fix=auto_fix)
+    state = backend.care_state()
+    state.record(rep)
+    log(autocare.summary(rep))
+    if notify is None:
+        from .notify import notify_problems as notify
+    notify(state.to_notify(rep))
+    return rep
+
+
 # --------------------------------------------------------------------------- main loop
 
 
@@ -157,6 +179,16 @@ def run() -> int:
     tracker = Tracker(connect())
     auto = AutoGaming(lambda: TweakManager(registry, shell_runner), running_exe_names, game_exes, log=log)
     values, last_reload, last_game_check = settings.load(), 0.0, 0.0
+    next_care = time.time() + CARE_FIRST_SECONDS
+    care_thread: threading.Thread | None = None
+
+    def care():
+        from .backend import Backend
+
+        try:
+            care_checkup(Backend, bool(values.get("auto_fix", True)), log)
+        except Exception as exc:
+            log(f"Auto Care error: {exc}")
     try:
         while True:
             time.sleep(SAMPLE_SECONDS)
@@ -170,6 +202,11 @@ def run() -> int:
                     time.sleep(30)  # e.g. the database is briefly locked; try again later
             else:
                 tracker._last = now  # don't count the paused time when tracking is turned back on
+            if values.get("auto_care") and now >= next_care and not (care_thread and care_thread.is_alive()):
+                # Its own thread: a check-up takes a while and must not pause screen time recording.
+                next_care = now + CARE_EVERY_SECONDS
+                care_thread = threading.Thread(target=care, daemon=True)
+                care_thread.start()
             if (values.get("auto_gaming") or auto.state["active"]) and now - last_game_check >= GAME_CHECK_SECONDS:
                 last_game_check = now
                 try:

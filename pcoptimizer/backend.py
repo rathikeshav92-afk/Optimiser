@@ -113,6 +113,41 @@ class Backend:
 
         return background.sync_task(settings.save({"auto_gaming": enabled}))
 
+    # Auto Care
+    def care_settings(self) -> dict:
+        from . import settings
+
+        values = settings.load()
+        return {k: bool(values[k]) for k in ("auto_care", "auto_fix", "show_advanced")}
+
+    def set_care_setting(self, key: str, value: bool) -> tuple[bool, str]:
+        from . import background, settings
+
+        values = settings.save({key: value})
+        return background.sync_task(values) if key == "auto_care" else (True, "")
+
+    def ensure_helper(self) -> tuple[bool, str]:
+        """Register the background helper if a feature needs it but it isn't set up, or if the task still
+        runs a different copy of the app (e.g. an older version that doesn't have Auto Care)."""
+        from . import background, settings
+
+        values = settings.load()
+        if not background.helper_needed(values):
+            return True, ""
+        program, args = screentime.tracker_command()
+        current = screentime.autostart_target()
+        if current == f"{program} {args}":
+            return True, ""
+        if current:
+            screentime.disable_autostart()
+            screentime.stop_trackers()  # only one helper can run; the old copy's must go for the new one to start
+        return background.sync_task(values)
+
+    def care_state(self):
+        from .autocare import CareState
+
+        return CareState()
+
     # health / display / dns
     def monitors(self):
         from . import display
@@ -234,14 +269,6 @@ class Backend:
 
         return services.set_running(name, run)
 
-    def open_in_regedit(self, hive: str, key: str) -> None:
-        """Open Windows' Registry Editor at this key (it reopens wherever LastKey points)."""
-        from .regedit import FULL_HIVE
-
-        self.registry.set("HKCU", r"Software\Microsoft\Windows\CurrentVersion\Applets\Regedit", "LastKey",
-                          f"Computer\\{FULL_HIVE[hive]}" + (f"\\{key}" if key else ""), "SZ")
-        self.run_command("start regedit.exe", lambda _l: None)
-
     def open_url(self, url: str) -> None:
         import webbrowser
 
@@ -342,6 +369,7 @@ class DemoBackend(Backend):
         self.games.add(r"C:\Program Files (x86)\Steam\steamapps\common\Counter-Strike Global Offensive\game\bin\win64\cs2.exe")
         self._junk = {t.id: random.randint(5, 900) * 1024 ** 2 for t in self.clean_targets}
         self._ram_used = 0.62
+        self._care = {"auto_care": True, "auto_fix": True, "show_advanced": False}
         rk = processes.RUN_KEYS[0]
         for name, cmd in [("Discord", r'"C:\Users\me\AppData\Local\Discord\Update.exe" --processStart Discord.exe'),
                           ("Spotify", r'"C:\Users\me\AppData\Roaming\Spotify\Spotify.exe" /minimized'),
@@ -424,6 +452,21 @@ class DemoBackend(Backend):
     def set_auto_gaming(self, enabled):
         self._auto_on = enabled
         return True, ""
+
+    def care_settings(self):
+        return dict(self._care)
+
+    def set_care_setting(self, key, value):
+        self._care[key] = value
+        return True, ""
+
+    def ensure_helper(self):
+        return True, ""
+
+    def care_state(self):
+        from .autocare import CareState
+
+        return CareState(self.data / "autocare.json")
 
     def monitors(self):
         from .display import Monitor
@@ -615,9 +658,6 @@ class DemoBackend(Backend):
             return set_running(name, run)  # exercises the real protection check
         self._stopped = getattr(self, "_stopped", set()) | ({name} if not run else set())
         return True, ""
-
-    def open_in_regedit(self, hive, key):
-        pass
 
     def run_benchmark(self, progress):
         base = {"cpu_single": 1650, "cpu_multi": 14800, "ram_copy": 11.8, "disk_write": 2400, "disk_iops": 2100,

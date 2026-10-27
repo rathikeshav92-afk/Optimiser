@@ -1,39 +1,47 @@
 # ⚡ PC Optimizer
 
-A Windows desktop app that shows your PC's specs, rates it out of 100, and speeds it up:
-Gaming Mode, Balanced Mode, registry and Windows tweaks, a junk cleaner, a RAM booster
-and a toolkit of maintenance commands. **Every change it makes is backed up and can be undone.**
+A Windows desktop app that keeps your PC fast without you needing to know how it works.
+**Auto Care** checks your PC by itself, fixes small problems automatically and sends you a Windows
+notification about anything it can't fix, in plain words with one button to help. It also has Gaming
+Mode, Windows speed tweaks, a junk cleaner and a toolkit of maintenance commands.
+**Every change it makes is backed up and can be undone.**
+
+**[Download the latest PCOptimizer.exe](https://github.com/rathikeshav92-afk/Optimiser/releases/latest)**
 
 ![Dashboard](docs/dashboard.png)
 
 ## Features
 
+The sidebar shows the everyday pages (Home, PC Check-up, Speed Up, Clean Up, Gaming Mode, Ask for Help,
+Undo Changes). Expert tools sit under **More tools**.
+
 | Section | What it does |
 |---|---|
-| **Dashboard** | Full specs (CPU, GPU + VRAM, RAM speed and sticks, every drive and its type, motherboard, display, Windows build), a **performance rating out of 100** with a per-component breakdown and your weakest part, live CPU/RAM/disk usage, **CPU and GPU temperatures and GPU load**, and **One-Click Boost**, which lets you pick its steps: restore point, speed settings, removing bloat and tracking in the registry, turning off unneeded services, cleaning junk, freeing RAM and flushing DNS. When it's done it offers to restart. |
-| **Health Check** | Finds what costs your PC the most performance, including things outside Windows: **RAM running without XMP/EXPO**, **monitor below its maximum refresh rate** (one-click fix), **Resizable BAR off**, single-channel RAM, low disk space, Windows on a hard disk, an old graphics driver, high temperatures, too many startup apps, no restart for a week, and Memory Integrity status. Each result has a fix button or instructions, including **Restart into BIOS**. **Fix everything** applies every safe recommendation in one go: the full One-Click Boost, monitors set to their highest refresh rate, the fastest DNS, Windows Update driver updates, and Auto Gaming Mode. It then lists the BIOS steps that only you can do, with a Restart into BIOS button. |
-| **AI Assistant** | Chat with Claude (Anthropic's AI) in plain words, for example "my games stutter", "my Wi-Fi keeps dropping" or "turn on night light". It checks your PC with read-only tools and diagnostic commands, then fixes the problem with the app's own optimizations, cleaner, startup manager, Windows commands or registry edits. **It asks your permission before every change** and shows exactly what it will do. Its registry edits are backed up and can be undone in Backup & Restore. It can also open the right Windows Settings page for you. |
+| **Auto Care** (Home) | Checks your PC when the app opens, every 30 minutes while it's open, and every 4 hours in the background when it's closed. **Fixes safe things by itself:** frees memory when it's over 85% full, deletes temporary junk files (never browser data, the Recycle Bin or your files) and sets your screen to its smoothest refresh rate. **Tells you about the rest** with a Windows notification (at most once a day per problem) and a plain-language card with one button: a device without a driver (missing chipset drivers are grouped into one item with a link to your motherboard's driver page), an old graphics driver, a PC that needs a restart, overheating, a nearly full drive, or a fix that didn't work. Optional upgrades (XMP, Resizable BAR on cards that support it, an SSD) are shown as tips, not alarms. Both automatic checking and automatic fixing can be switched off. |
+| **Home** | Full specs (CPU, GPU + VRAM, RAM speed and sticks, every drive and its type, motherboard, display, Windows build), a **performance rating out of 100** with a per-component breakdown and your weakest part, live CPU/RAM/disk usage, **CPU and GPU temperatures and GPU load**, and **One-Click Boost**, which lets you pick its steps: restore point, speed settings, removing bloat and tracking in the registry, turning off unneeded services, cleaning junk, freeing RAM and flushing DNS. When it's done it offers to restart. |
+| **PC Check-up** | Finds what costs your PC the most performance, including things outside Windows: **RAM running without XMP/EXPO**, **monitor below its maximum refresh rate** (one-click fix), **Resizable BAR off**, single-channel RAM, low disk space, Windows on a hard disk, an old graphics driver, high temperatures, too many startup apps, no restart for a week, and Memory Integrity status. Each result has a fix button or instructions, including **Restart into BIOS**. **Fix everything** applies every safe recommendation in one go: the full One-Click Boost, monitors set to their highest refresh rate, the fastest DNS, Windows Update driver updates, and Auto Gaming Mode. It then lists the BIOS steps that only you can do, with a Restart into BIOS button. |
+| **Ask for Help** (AI) | Chat with Claude (Anthropic's AI) in plain words, for example "my games stutter", "my Wi-Fi keeps dropping" or "turn on night light". It checks your PC with read-only tools and diagnostic commands, then fixes the problem with the app's own optimizations, cleaner, startup manager or Windows commands. **It asks your permission before every change** and shows exactly what it will do. It cannot edit the registry directly: registry commands (`reg add`, `regedit`, registry cmdlets) are blocked. It can also open the right Windows Settings page for you. |
 | **Screen Time** | How long you use each app, with **Daily**, **Weekly** and **Monthly** views. Each view shows total time, the daily average, the change from the previous period, your most used app, a chart (by hour for a day, by day for a week or month) and a ranked list of apps. Use the arrows to look back at earlier days, weeks and months. |
 | **Gaming Mode** | Ultimate Performance power plan, Game Mode, background recording (Game DVR) off, hardware-accelerated GPU scheduling, CPU/GPU priority for games (MMCSS), no network throttling, no CPU power throttling, raw mouse input. Lists RAM-heavy background apps so you can close them, and gives driver and in-game setting tips based on your GPU, RAM and monitor. |
 | **Game Profiles** | Add each game's `.exe`. Every game gets **High CPU priority** and the **high-performance GPU**, and you can turn off fullscreen optimizations per game. **Boost & Launch** switches to Gaming Mode, frees RAM, flushes DNS and starts the game as your normal user. **Auto Gaming Mode** switches to Gaming Mode whenever one of your games is running, however you start it, and about 30 seconds after you close the game it puts back exactly the settings it changed. It runs in the background helper even when the app is closed. An optional per-game **Skip Defender scans** reduces loading stutter. |
 | **Balanced Mode** | Switches to the Balanced power plan and puts back your original values for the power-hungry gaming tweaks. Your general speed tweaks stay on. Use it for everyday work and battery life. |
-| **Speed Up PC** | Visual effects set to best performance (smooth fonts kept), transparency off, no startup-app delay, faster menus, Store apps stopped from running in the background, ads and suggestions off, web results removed from Start search, less telemetry, faster shutdown, NTFS last-access timestamps off, optional hibernation off. Also has a **startup-apps manager** that works the same way as Task Manager. A **Privacy & bloat** section turns off the advertising ID, lock-screen ads, activity history, feedback pop-ups, Widgets, Edge running in the background, uploading updates to strangers' PCs, the Sticky Keys pop-up, Copilot (optional) and background telemetry scheduled tasks. **Optional security trade-offs** has an opt-in Memory Integrity switch, which is never part of the boost. **Fast DNS** switches to Cloudflare, Google or Quad9 (or back to automatic), with a speed test that picks the fastest for your connection. |
+| **Speed Up** | Visual effects set to best performance (smooth fonts kept), transparency off, no startup-app delay, faster menus, Store apps stopped from running in the background, ads and suggestions off, web results removed from Start search, less telemetry, faster shutdown, NTFS last-access timestamps off, optional hibernation off. Also has a **startup-apps manager** that works the same way as Task Manager. A **Privacy & bloat** section turns off the advertising ID, lock-screen ads, activity history, feedback pop-ups, Widgets, Edge running in the background, uploading updates to strangers' PCs, the Sticky Keys pop-up, Copilot (optional) and background telemetry scheduled tasks. **Optional security trade-offs** has an opt-in Memory Integrity switch, which is never part of the boost. **Fast DNS** switches to Cloudflare, Google or Quad9 (or back to automatic), with a speed test that picks the fastest for your connection. |
 | **Services** | **Disable** services you don't use. Recommended ones are ticked by default: telemetry, WAP Push, Maps, Retail Demo, Fax, Error Reporting, Remote Registry, Link Tracking, Media Player sharing, AllJoyn, Insider and Phone Service. Optional ones (Print Spooler, Xbox, Geolocation, Search indexing, SysMain, Bluetooth, Remote Desktop, Parental Controls, Smart Card, Program Compatibility) each come with a warning about what stops working. Undo puts back the original startup type. **All services** lists every service on your PC with search and filters (running, stopped, automatic, manual, disabled, changed by me). Select one to see what it does, **start, stop or restart** it, or **change its startup type** (Automatic, Automatic (Delayed), Manual, Disabled). Every startup change can be undone. Services Windows needs are protected. |
 | **Built-in Apps** | Remove preinstalled apps. Bloat is pre-ticked (News, Tips, Get Help, Solitaire, Clipchamp, Feedback Hub, Maps, Cortana and so on). Optional apps such as Xbox, Media Player, Phone Link and promoted third-party apps come with notes. The Store, Calculator, Photos, Notepad, Windows Security, codecs and driver panels are protected. Removed apps can be **reinstalled** from the same page. |
 | **Look & Feel** | The classic right-click menu, taskbar on the left, show file extensions and hidden files, File Explorer opening to This PC, compact File Explorer, full path in the title bar, hiding the Task View, Widgets and Chat buttons, a search icon instead of the search box, End task on taskbar right-click, dark mode and seconds on the clock. Each one can be undone, and Explorer restarts automatically to apply them. |
 | **Driver Updates** | Checks **Windows Update** for driver updates for your hardware and installs the ones you pick, after creating a restore point. Every driver offered is signed and approved by Microsoft. Also shows your **graphics driver's** version and age with a button to the maker's official download page (NVIDIA, AMD or Intel), lists **devices with problems** (missing driver, failed to start...), lists installed drivers oldest first with ones over 3 years old highlighted, and can **back up all drivers** to your Documents folder. |
-| **Cleaner & RAM** | Scans and cleans user and Windows temp files, the Windows Update cache, the Delivery Optimization cache, thumbnail caches, crash dumps, old logs, browser caches and the Recycle Bin. **Free up RAM** trims the memory every app holds, and you can flush the DNS cache. |
-| **CMD Toolkit** | 33 one-click commands, with live output. **Cleanup:** temp files (yours and Windows'), Prefetch, Recycle Bin, thumbnail/icon cache, Delivery Optimization cache, Microsoft Store cache. **Repair:** SFC, DISM, chkdsk, reset Windows Update. **Storage:** WinSxS cleanup, TRIM/defrag, Disk Cleanup. **Network:** flush DNS/ARP, renew IP, reset Winsock/TCP, TCP auto-tuning, show saved Wi-Fi passwords. **Diagnostics:** disk health, battery report, power report, what's keeping the PC awake, RAM test, startup list, system summary, activation status. **System:** restore point, update all apps (winget), restart Explorer, power plans, open Registry Editor. Commands that delete things or show passwords ask for confirmation first. You can also run your own commands. |
-| **Registry** | Browse and edit the registry: jump to common keys, view subkeys and values, and create, edit or delete values (strings, numbers, binary, multi-string). **Every change is backed up**: the old value is saved so you can undo it in Backup & Restore, and the whole key is exported to a `.reg` file in `%LOCALAPPDATA%\PCOptimizer\registry-backups` first. Critical keys show a warning. |
-| **Benchmark** | A roughly 20-second test of single-core and all-core CPU, RAM copy speed, disk write speed, 4K disk writes, background CPU load and free RAM. Your first run is saved as **Before**, and later runs show **After** with the % change for each test. |
-| **Backup & Restore** | Create a restore point, see every change that's currently applied, undo changes one by one or all at once, and open System Restore. |
+| **Clean Up** | Scans and cleans user and Windows temp files, the Windows Update cache, the Delivery Optimization cache, thumbnail caches, crash dumps, old logs, browser caches and the Recycle Bin. **Free up RAM** trims the memory every app holds, and you can flush the DNS cache. |
+| **Command Tools** | 32 one-click commands, with live output. **Cleanup:** temp files (yours and Windows'), Prefetch, Recycle Bin, thumbnail/icon cache, Delivery Optimization cache, Microsoft Store cache. **Repair:** SFC, DISM, chkdsk, reset Windows Update. **Storage:** WinSxS cleanup, TRIM/defrag, Disk Cleanup. **Network:** flush DNS/ARP, renew IP, reset Winsock/TCP, TCP auto-tuning, show saved Wi-Fi passwords. **Diagnostics:** disk health, battery report, power report, what's keeping the PC awake, RAM test, startup list, system summary, activation status. **System:** restore point, update all apps (winget), restart Explorer, power plans. Commands that delete things or show passwords ask for confirmation first. You can also run your own commands. |
+| **Speed Test** | A roughly 20-second test of single-core and all-core CPU, RAM copy speed, disk write speed, 4K disk writes, background CPU load and free RAM. Your first run is saved as **Before**, and later runs show **After** with the % change for each test. |
+| **Undo Changes** | Create a restore point, see every change that's currently applied, undo changes one by one or all at once, and open System Restore. |
 
 ## Getting it on your PC
 
 ### Option A: download the ready-made .exe (easiest)
-1. Open this repository on GitHub and go to **Actions → "Test & build Windows app"**.
-2. Open the latest green run and download the **PCOptimizer** artifact (a zip).
-3. Unzip it and double-click **PCOptimizer.exe**. Click **Yes** on the administrator prompt.
+1. Download **PCOptimizer.exe** from the [latest release](https://github.com/rathikeshav92-afk/Optimiser/releases/latest).
+2. Double-click it and click **Yes** on the administrator prompt.
+
+Every push also builds the app in **Actions → "Test & build Windows app"** (download the **PCOptimizer** artifact).
 
 > Windows SmartScreen may warn about an unsigned app: click **More info → Run anyway**.
 
@@ -69,7 +77,7 @@ which app is in front every 5 seconds. It uses almost no CPU or RAM.
 ## Recommended first run
 1. **Benchmark → Run benchmark** to record your "before" score.
 2. **Backup & Restore → Create restore point**
-3. **Dashboard → One-Click Boost**
+3. **Home → Speed up my PC**
 4. **Gaming Mode → Activate** if you play games, or **Balanced Mode** for work.
 5. **Game Profiles**: add your games.
 6. **Services → Disable selected** (the recommended ones are already ticked).
@@ -116,15 +124,17 @@ pcoptimizer/
   benchmark.py     before/after benchmark
   ai_assistant.py  Claude-powered assistant: tools, approval gate, read-only command detection
   ai_settings.py   API key storage (Windows DPAPI)
-  fixall.py        Fix everything on the Health Check page
-  health.py        Health Check rules and probes
+  autocare.py      Auto Care: automatic check-ups, safe fixes, plain-language problems, history
+  notify.py        Windows toast notifications
+  fixall.py        Fix everything on the PC Check-up page
+  health.py        PC Check-up rules and probes
   display.py       monitor refresh rate detection and switching
   network.py       Fast DNS
-  background.py    background helper: screen time + Auto Gaming Mode
+  background.py    background helper: screen time, Auto Gaming Mode and Auto Care
   boost.py         One-Click Boost steps
   servicemgr.py    all-services manager
   appx.py          built-in app removal / reinstall
-  regedit.py       registry editor with per-value undo and .reg backups
+  regedit.py       keeps earlier registry edits undoable (the editor itself was removed in 2.0)
   drivers.py       Windows Update driver search/install, driver inventory, problem devices
   screentime.py    screen time tracker, storage and daily/weekly/monthly reports
   backend.py       facade used by the UI, plus a demo backend
